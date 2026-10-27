@@ -342,7 +342,7 @@ test('a valid turn without clearing still inserts exactly one new row', async ()
   board.assertValid();
 });
 
-test('all spools resume gravity after insertion, while release initially drops only the selected spool', async () => {
+test('all spools settle before insertion and resume gravity after the new row rises', async () => {
   const board = new Board();
   const selected = add(board, ROWS - 1, 0, 1);
   const floating = add(board, 4, 7, 1);
@@ -350,11 +350,77 @@ test('all spools resume gravity after insertion, while release initially drops o
   game.nextRow = [{ col: 1, length: 1, color: '#a8caa5' }, { col: 5, length: 1, color: '#a6c8df' }];
   assert.equal(await turn(game, selected.id, 1), true);
   const insertion = frames.find(frame => frame.kind === 'insert');
-  assert.equal(insertion.before.find(spool => spool.id === floating.id).row, 4);
-  assert.equal(insertion.after.find(spool => spool.id === floating.id).row, 3);
+  assert.equal(insertion.before.find(spool => spool.id === floating.id).row, ROWS - 1);
+  assert.equal(insertion.after.find(spool => spool.id === floating.id).row, ROWS - 2);
   assert.equal(board.getSpool(floating.id).row, ROWS - 1);
   assert.equal(board.getSpool(selected.id).row, ROWS - 2);
+  assert.ok(frames.slice(0, frames.indexOf(insertion)).some(frame =>
+    frame.kind === 'fall' && frame.moved.some(move => move.id === floating.id)));
   assert.ok(frames.slice(frames.indexOf(insertion) + 1).some(frame => frame.kind === 'fall'));
+  board.assertValid();
+});
+
+test('sliding a support finishes all resulting falls and chains before insertion, then advances the preview last', async () => {
+  const board = new Board();
+  add(board, ROWS - 1, 0, 1);
+  add(board, ROWS - 1, 4, 1);
+  add(board, ROWS - 2, 0, 4);
+  const selected = add(board, ROWS - 3, 3, 2);
+  add(board, ROWS - 4, 3, 1);
+  const freed = add(board, ROWS - 4, 4, 5);
+  const survivor = add(board, ROWS - 5, 3, 1);
+  add(board, ROWS - 5, 5, 4);
+  assert.deepEqual(board.gravityStep(), [], 'the initial pieces must all have support');
+  assert.deepEqual(board.fullRows(), []);
+
+  const harness = gatedGame(board);
+  const { game, frames, clears } = harness;
+  const incomingRow = game.nextRow;
+  const makeRow = board.makeRow.bind(board);
+  let followingRowsGenerated = 0;
+  board.makeRow = () => { followingRowsGenerated += 1; return makeRow(); };
+  assert.equal(game.beginDrag(selected.id), true);
+  assert.equal(game.moveDrag(1), true);
+  assert.equal(board.getSpool(freed.id).row, ROWS - 4, 'gravity stays paused throughout dragging');
+
+  const finished = game.releaseDrag().then(result => ({ finished: true, result }));
+  let insertionSeen = false;
+  let freedSpoolFellBeforeInsertion = false;
+  let survivorFellAfterInsertion = false;
+  let steps = 0;
+  while (true) {
+    const step = await Promise.race([harness.nextFrame(), finished]);
+    if (step.finished) { assert.equal(step.result, true); break; }
+    assert.ok(++steps < 100);
+    const { frame } = step;
+    assert.equal(game.nextRow, incomingRow, 'the next preview cannot advance during either resolution');
+    assert.equal(followingRowsGenerated, 0, 'the following row is generated only after the complete turn');
+    if (frame.kind === 'insert') {
+      insertionSeen = true;
+      assert.equal(freedSpoolFellBeforeInsertion, true);
+      assert.deepEqual(clears, [
+        { rows: [ROWS - 2], chain: 1, points: 100 },
+        { rows: [ROWS - 1], chain: 2, points: 150 },
+      ]);
+      assert.equal(game.score, 250, 'both chain awards must finish before the incoming row appears');
+      assert.deepEqual(frame.before.map(({ id, row }) => ({ id, row })), [{ id: survivor.id, row: ROWS - 1 }]);
+    } else if (frame.kind === 'clear') {
+      assert.equal(insertionSeen, false, 'this fixture must finish its entire chain before insertion');
+    } else if (frame.kind === 'fall') {
+      if (!insertionSeen && frame.moved.some(move => move.id === freed.id)) freedSpoolFellBeforeInsertion = true;
+      if (insertionSeen && frame.moved.some(move => move.id === survivor.id)) survivorFellAfterInsertion = true;
+    }
+    step.finish();
+  }
+
+  assert.equal(survivorFellAfterInsertion, true, 'preview timing must also cover post-insertion gravity');
+  assert.equal(frames.filter(frame => frame.kind === 'clear').length, 2);
+  assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
+  assert.equal(game.score, 250);
+  assert.equal(game.moves, 1);
+  assert.equal(game.state, STATES.IDLE);
+  assert.notEqual(game.nextRow, incomingRow);
+  assert.equal(followingRowsGenerated, 1);
   board.assertValid();
 });
 
@@ -409,6 +475,7 @@ test('every animation phase locks dragging, cancellation, reset, and duplicate r
 test('top overflow ends the turn before insertion or post-insertion gravity can hide it', async () => {
   const board = new Board();
   const top = add(board, 0, 0, 1);
+  for (let row = 1; row < ROWS; row += 1) add(board, row, 0, 1);
   const selected = add(board, ROWS - 1, 3, 1);
   const { game, frames, clears } = captureGame(board);
   assert.equal(await turn(game, selected.id, 4), true);
@@ -416,7 +483,7 @@ test('top overflow ends the turn before insertion or post-insertion gravity can 
   assert.equal(game.moves, 1);
   assert.equal(game.score, 0);
   assert.equal(board.getSpool(top.id).row, 0);
-  assert.equal(board.spools.size, 2);
+  assert.equal(board.spools.size, ROWS + 1);
   assert.equal(game.nextRow, NEXT_ROW);
   assert.deepEqual(frames, []);
   assert.deepEqual(clears, []);

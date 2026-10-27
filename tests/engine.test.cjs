@@ -211,7 +211,7 @@ test('gravity advances bottom to top by one cell per step without changing spool
   checkBoard(board);
 });
 
-test('release gravity can resolve only the selected spool before clearing', () => {
+test('the optional single-spool gravity helper leaves other spools untouched', () => {
   const board = new Board();
   const selected = add(board, 2, 0, 3);
   const untouched = add(board, 4, 6, 2);
@@ -338,7 +338,7 @@ test('seeded multi-turn stress preserves cell ownership, rigid lengths, and fini
       assert.equal(board.moveSpool(selected.id, columns[Math.floor(random() * columns.length)]), true);
       validTurns += 1;
       checkBoard(board);
-      board.settle(selected.id);
+      board.settle();
       clearedRows += resolveRows(board).reduce((sum, count) => sum + count, 0);
       const specs = board.makeRow();
       checkNewRow(specs);

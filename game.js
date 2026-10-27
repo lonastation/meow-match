@@ -56,18 +56,18 @@
       this.setState(STATES.IDLE);
       return true;
     }
-    async fall(onlyId = null) {
+    async fall() {
       while (true) {
         const before = this.board.snapshot();
-        const moved = this.board.gravityStep(onlyId);
+        const moved = this.board.gravityStep();
         if (!moved.length) return;
         await this.animate({ kind: "fall", before, after: this.board.snapshot(), moved, duration: 150 });
       }
     }
-    async resolve(onlyId = null) {
-      // Release initially drops only the selected spool. After a clear, every
-      // spool is eligible. No row compression or per-cell falling is used.
-      await this.fall(onlyId);
+    async resolve() {
+      // A slide can remove another spool's support. Settle the WHOLE board
+      // before scanning for clears, both after a drag and after insertion.
+      await this.fall();
       let chain = 0;
       while (true) {
         // Capture ALL full rows across the settled board before changing it.
@@ -96,7 +96,9 @@
       }
       this.moves += 1;
       this.setState(STATES.RESOLVING);
-      await this.resolve(id);
+      // Finish every fall, simultaneous clear, chain, and score award caused
+      // by this move before the incoming row can appear or affect the board.
+      await this.resolve();
       // A top-row occupant would leave the board on this insertion: end now,
       // before gravity could hide an overflow. Keep the last valid grid intact.
       if (this.board.grid[0].some((cell) => cell !== null)) {
@@ -107,11 +109,12 @@
       const before = this.board.snapshot();
       this.board.insertRow(this.nextRow);
       await this.animate({ kind: "insert", before, after: this.board.snapshot(), duration: 240 });
-      this.nextRow = this.board.makeRow();
       this.setState(STATES.RESOLVING);
       // Insertion starts a separate resolution, so its first clear scores 100.
       await this.resolve();
       this.board.assertValid();
+      // Reveal the following preview only when the complete turn is settled.
+      this.nextRow = this.board.makeRow();
       this.setState(STATES.IDLE);
       return true;
     }
@@ -176,7 +179,10 @@ if (typeof document !== "undefined") (() => {
       const movable = game.board.snapshot().some((s) => { const b = game.board.dragBounds(s.id); return b.min !== b.max; });
       setStatus(movable ? "Your move. Slide a spool." : "No room to slide. Start a fresh basket.");
     } else if (game.state === STATES.DRAGGING) setStatus("Find a little room, then let go.");
-    else if (game.state === STATES.INSERTING_ROW) setStatus("A little more yarn is on its way…", true);
+    else if (game.state === STATES.INSERTING_ROW) {
+      popup = null;
+      setStatus("All settled. Here comes more yarn…", true);
+    }
     else if (game.state === STATES.RESOLVING) setStatus("Let the yarn settle…", true);
     else {
       setStatus("The basket is full. Ready for another?");
@@ -317,12 +323,17 @@ if (typeof document !== "undefined") (() => {
   }
 
   function drawPreview() {
+    // Keep the tray in place, but hide its yarn while the current outcome is
+    // unresolved. The incoming row is revealed as its insertion begins.
+    const visible = game.state === STATES.IDLE || game.state === STATES.INSERTING_ROW;
+    preview.dataset.visible = String(visible);
+    preview.setAttribute("aria-label", visible ? "Preview of the next bottom row" : "Next row hidden while the board resolves");
     if (!preview.width) return;
     const width = preview.clientWidth, height = preview.clientHeight;
     previewCtx.clearRect(0,0,width,height);
     const unit = width / COLS;
     for (let col=0;col<COLS;col+=1) { previewCtx.fillStyle="#edeee3"; rounded(previewCtx,col*unit+1,3,unit-2,height-6,3); previewCtx.fill(); }
-    game.nextRow.forEach((s) => drawSpool(previewCtx,{...s,row:0},unit,height));
+    if (visible) game.nextRow.forEach((s) => drawSpool(previewCtx,{...s,row:0},unit,height));
   }
   function resize() {
     // CSS owns available space; the backing stores use DPR, keeping hit-testing

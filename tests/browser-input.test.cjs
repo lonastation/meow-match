@@ -234,16 +234,20 @@ test('touch and mouse use the same pointer path and a valid release inserts exac
     const app = browserHarness();
     const { game, spool } = app;
     const nextRow = game.nextRow;
+    const preview = app.getElement('next-row');
+    assert.equal(preview.dataset.visible, 'true');
 
     app.pointer('pointerdown', 135, BOTTOM_CENTER_Y, pointerType);
     app.pointer('pointermove', 195, 100, pointerType);
     assert.equal(game.state, 'DRAGGING');
+    assert.equal(preview.dataset.visible, 'false', 'hide the incoming row while the player is dragging');
     assert.equal(game.board.getSpool(spool.id).col, 6);
     assert.equal(game.board.getSpool(spool.id).row, ROWS - 1);
     assert.equal(game.moves, 0, 'a drag alone must not consume a turn');
 
     app.pointer('pointerup', 195, 100, pointerType);
     assert.equal(game.state, 'RESOLVING');
+    assert.equal(preview.dataset.visible, 'false', 'keep the preview hidden while the outcome resolves');
     assert.equal(app.getElement('help-button').disabled, true);
     assert.equal(app.getElement('restart-button').disabled, true);
 
@@ -253,6 +257,7 @@ test('touch and mouse use the same pointer path and a valid release inserts exac
     await app.finishAnimations();
 
     assert.equal(game.state, 'IDLE');
+    assert.equal(preview.dataset.visible, 'true', 'reveal the following preview only when input resumes');
     assert.equal(game.moves, 1);
     assert.equal(game.score, 0);
     assert.equal(game.board.spools.size, 3, 'one existing spool plus exactly two new spools');
