@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "Meow Match",
+  "short_name": "Meow Match",
+  "description": "A cozy offline puzzle. Slide spools, clear full rows, and make room for more yarn.",
+  "lang": "en",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f5f3e9",
+  "theme_color": "#f5f3e9",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

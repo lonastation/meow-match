@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f3e9">
+  <meta name="description" content="A cozy, completely offline yarn-sliding puzzle. Slide spools, clear rows, and make room for a little more yarn.">
+  <title>Meow Match · A little yarn therapy</title>
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="engine.js" defer></script>
+  <script src="game.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#" aria-label="Meow Match home"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M8 17 6 5l12 7h4L34 5l-2 12c7 19-31 23-24 0Z" fill="currentColor"/><path d="M14 21h1m10 0h1m-8 6 2 1 2-1" stroke="#f5f3e9" stroke-width="2.8" stroke-linecap="round"/></svg><span>meow match<span class="brand-dot">.</span></span></a>
+    <span class="offline-badge"><span></span> MADE FOR OFFLINE</span>
+  </header>
+  <main class="layout">
+    <section class="intro" aria-labelledby="intro-title">
+      <div class="eyebrow"><span class="tiny-star">✳</span> A LITTLE YARN THERAPY</div>
+      <h1 id="intro-title">A little slide.<br>A lot of <em>purr.</em></h1>
+      <p class="intro-copy">Untangle your day, one row at a time.<br>Make a little room for a little more yarn.</p>
+      <svg class="cat-illustration" viewBox="0 0 360 220" role="img" aria-label="A sleepy orange cat curled up beside a ball of yarn">
+        <ellipse cx="173" cy="193" rx="131" ry="10" fill="#dedfd0" opacity=".65"/>
+        <path d="M218 166c85 35 78-59 39-55" fill="none" stroke="#d98956" stroke-width="24" stroke-linecap="round"/>
+        <path d="M90 177c-10-64 22-106 80-106 61 0 98 58 73 103-21 31-122 21-153 3" fill="#e8a071"/>
+        <path d="m155 75 9 22m15-22 6 19m17-12 1 17" stroke="#c77c4d" stroke-width="8" stroke-linecap="round"/>
+        <path d="m63 124 4-54 39 24 24 1 35-24 1 57c20 67-124 70-103-4" fill="#efae81"/>
+        <path d="m75 103 1-28 21 22m41 4 20-21-1 27" fill="#df8d6b"/>
+        <path d="m78 132 9 5 9-5m34 0 9 5 9-5" stroke="#644c3b" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+        <path d="m105 146 9 6 8-6" fill="#9e6452"/><path d="M114 151v5m0 0q-6 7-11 1m11-1q6 7 11 1" stroke="#644c3b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <path d="m66 143-22-4m23 13-23 3m113-12 22-4m-23 13 23 3" stroke="#a86d4f" stroke-width="2" stroke-linecap="round"/>
+        <ellipse cx="161" cy="179" rx="28" ry="13" fill="#f2ba90"/><path d="m147 178 2 6m7-8 2 7" stroke="#cf8a62" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="270" cy="173" r="28" fill="#a7b9a3"/>
+        <path d="M247 157q31 2 44 26m-47-15q29-1 42 25m-43-13q23 0 32 20m-13-53q-7 22 12 51m1-51q-8 17 17 33" fill="none" stroke="#7e997c" stroke-width="2"/>
+        <path d="M283 195q32 5 37-10t22-6" fill="none" stroke="#7e997c" stroke-width="2.5" stroke-linecap="round"/>
+        <text x="206" y="49" fill="#89967c" font-family="Georgia, serif" font-size="22" transform="rotate(9 206 49)">z</text><text x="229" y="30" fill="#a4ae96" font-family="Georgia, serif" font-size="16">z</text>
+      </svg>
+      <div class="how-to"><div class="how-to-title">SMALL MOVES. HAPPY PAWS.</div><div class="instruction"><span>01</span><p><strong>Slide a spool</strong> left or right.</p></div><div class="instruction"><span>02</span><p><strong>Fill a row</strong> to clear it. Any color.</p></div><div class="instruction"><span>03</span><p><strong>Keep it cozy.</strong> New yarn rises each move.</p></div></div>
+      <p class="intro-footnote">No timer. No rush. Just one more row.</p>
+    </section>
+    <section class="game-shell" aria-label="Meow Match game">
+      <div class="game-toolbar"><span class="game-label"><span class="tiny-star">✳</span> THE YARN YARD</span><div class="toolbar-actions"><button class="icon-button" id="help-button" type="button" aria-label="How to play" title="How to play">?</button><button class="icon-button" id="restart-button" type="button" aria-label="Start a new game" title="New game"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9a8 8 0 1 1-.6 6M5 4v5h5"/></svg></button></div></div>
+      <div class="scoreboard"><div class="score-item current-score"><span>SCORE</span><strong id="score">0</strong></div><div class="score-item"><span>PERSONAL BEST</span><strong id="best">0</strong></div><div class="score-item"><span>MOVES</span><strong id="moves">0</strong></div></div>
+      <div class="board-region" id="board-region"><div class="board-wrap" id="board-wrap">
+        <canvas id="board" role="img" tabindex="0" aria-label="9 by 16 spool board. Drag a spool horizontally. Keyboard: up and down select a spool, left and right slide, Enter releases, Escape cancels."></canvas>
+        <div class="board-overlay" id="game-over" hidden><div class="end-card"><span class="end-cat" aria-hidden="true">=^･ω･^=</span><span class="eyebrow">THE BASKET IS FULL</span><h2>Time for a<br>catnap.</h2><p>You made room for <strong id="final-score">0</strong> points.</p><button class="primary-button" id="play-again" type="button">One more purr <span aria-hidden="true">↗</span></button><span class="end-note">A fresh basket. A fresh start.</span></div></div>
+        <div class="board-overlay" id="help-overlay" hidden><div class="help-card"><span class="eyebrow">WELCOME TO THE YARN YARD</span><h2>Make room<br>for more.</h2><p>Slide any spool left or right, then let go. Yarn falls, and a completely filled row clears.</p><p>Every move brings one new row. Keep the yarn below the top!</p><div class="help-scoring"><strong>100</strong> points per row<br><strong>+50</strong> per row for each chain step</div><p class="help-small">A tap or a slide back to the same spot costs no move. Colors are just for fun.</p><button class="primary-button" id="close-help" type="button">Let's play <span aria-hidden="true">↗</span></button></div></div>
+        <div class="board-overlay" id="restart-overlay" hidden><div class="help-card"><span class="eyebrow">A FRESH BALL OF YARN?</span><h2>Start fresh?</h2><p>Your current game will end. Your personal best stays.</p><button class="primary-button" id="confirm-restart" type="button">New game <span aria-hidden="true">↗</span></button><button class="text-button" id="cancel-restart" type="button">Keep playing</button></div></div>
+      </div></div>
+      <div class="game-bottom"><div class="next-row"><span>NEXT ROW <span aria-hidden="true">↑</span></span><canvas id="next-row" aria-label="Preview of the next bottom row"></canvas></div><div class="game-status" id="game-status" role="status" aria-live="polite"><span class="status-dot"></span><span id="status-text">Your move. Slide a spool.</span></div></div>
+    </section>
+  </main>
+  <footer class="site-footer"><span>A cozy little puzzle for curious paws.</span><span>SLIDE · CLEAR · PURR</span></footer>
+</body>
+</html>
