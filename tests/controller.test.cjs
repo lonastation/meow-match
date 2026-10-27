@@ -28,6 +28,43 @@ function captureGame(board) {
   return { game, frames, clears, changes };
 }
 
+function gatedGame(board) {
+  const frames = [];
+  const clears = [];
+  const scores = [];
+  const queue = [];
+  let waiting = null;
+  let pending = null;
+  const game = new Game({
+    board,
+    onClear: event => clears.push(event),
+    onChange: current => scores.push(current.score),
+    animate: frame => new Promise(resolve => {
+      assert.equal(pending, null, 'animations must not overlap');
+      pending = frame;
+      frames.push(frame);
+      const step = {
+        frame,
+        finish() {
+          assert.equal(pending, frame);
+          pending = null;
+          resolve();
+        },
+      };
+      if (waiting) { const deliver = waiting; waiting = null; deliver(step); }
+      else queue.push(step);
+    }),
+  });
+  game.nextRow = NEXT_ROW;
+  return {
+    game, frames, clears, scores,
+    get pending() { return pending; },
+    nextFrame() {
+      return queue.length ? Promise.resolve(queue.shift()) : new Promise(resolve => { waiting = resolve; });
+    },
+  };
+}
+
 async function turn(game, id, col) {
   assert.equal(game.beginDrag(id), true);
   assert.equal(game.moveDrag(col), true);
@@ -140,6 +177,136 @@ test('a simultaneous clear awards the current step value for each cleared row', 
   assert.equal(game.score, 200);
   assert.equal(game.moves, 1);
   assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
+  board.assertValid();
+});
+
+test('a whole-board scan clears nonadjacent full rows in one animation and one mutation batch', async () => {
+  const board = new Board();
+  const fullRows = [2, ROWS - 1];
+  for (const row of fullRows) {
+    add(board, row, 0, 4);
+    add(board, row, 4, 5);
+  }
+  // Two narrow support columns keep the upper full row stable while leaving
+  // every intervening row incomplete. The selected spool falls above it.
+  for (let row = 3; row < ROWS - 1; row += 1) {
+    add(board, row, 0, 1);
+    add(board, row, 4, 1);
+  }
+  const selected = add(board, 0, 0, 1);
+  const clearedIds = new Set(fullRows.flatMap(row => board.grid[row]));
+  const harness = gatedGame(board);
+  const { game, frames, clears, scores } = harness;
+  const scan = board.fullRows.bind(board);
+  const clear = board.clearRows.bind(board);
+  const gravity = board.gravityStep.bind(board);
+  const batches = [];
+  let clearing = false;
+
+  board.fullRows = () => {
+    assert.equal(harness.pending, null, 'scan must await the current animation');
+    return scan();
+  };
+  board.clearRows = rows => {
+    assert.deepEqual(rows, fullRows, 'both distant rows must be collected before mutation');
+    assert.equal(harness.pending, null, 'all clear visuals must finish before removal');
+    assert.ok([...clearedIds].every(id => board.getSpool(id)), 'all rows remain intact until the batch starts');
+    clearing = true;
+    const removed = clear(rows);
+    clearing = false;
+    batches.push([...rows]);
+    assert.ok([...clearedIds].every(id => board.getSpool(id) === null));
+    return removed;
+  };
+  board.gravityStep = onlyId => {
+    assert.equal(clearing, false, 'gravity cannot run between row removals');
+    if (batches.length) assert.ok([...clearedIds].every(id => board.getSpool(id) === null));
+    return gravity(onlyId);
+  };
+
+  assert.equal(game.beginDrag(selected.id), true);
+  assert.equal(game.moveDrag(1), true);
+  const finished = game.releaseDrag().then(result => ({ finished: true, result }));
+  let steps = 0;
+  while (true) {
+    const step = await Promise.race([harness.nextFrame(), finished]);
+    if (step.finished) { assert.equal(step.result, true); break; }
+    assert.ok(++steps < 100);
+    if (step.frame.kind === 'clear') {
+      assert.deepEqual(step.frame.rows, fullRows);
+      assert.deepEqual(scan(), fullRows);
+      assert.ok([...clearedIds].every(id => board.getSpool(id)));
+      assert.deepEqual(batches, []);
+      assert.equal(game.score, 0);
+    }
+    step.finish();
+  }
+
+  assert.deepEqual(batches, [fullRows]);
+  assert.deepEqual(clears, [{ rows: fullRows, chain: 1, points: 200 }]);
+  assert.equal(frames.filter(frame => frame.kind === 'clear').length, 1);
+  assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
+  assert.deepEqual([...new Set(scores)], [0, 200]);
+  assert.equal(game.score, 200);
+  assert.equal(game.moves, 1);
+  assert.equal(game.state, STATES.IDLE);
+  board.assertValid();
+});
+
+test('global gravity finishes every fall animation before scanning already-full nonadjacent rows', async () => {
+  const board = new Board();
+  const fullRows = [ROWS - 3, ROWS - 1];
+  add(board, ROWS - 1, 0, 4);
+  add(board, ROWS - 1, 4, 4);
+  add(board, ROWS - 2, 0, 1);
+  add(board, ROWS - 2, 4, 1);
+  add(board, ROWS - 3, 0, 4);
+  add(board, ROWS - 3, 4, 5);
+  add(board, ROWS - 2, 8, 1);
+  const slowFalling = add(board, 2, 1, 1);
+  const harness = gatedGame(board);
+  const { game, frames, clears } = harness;
+  const scan = board.fullRows.bind(board);
+  let scans = 0;
+  let initialFallFrames = 0;
+
+  board.fullRows = () => {
+    assert.equal(harness.pending, null, 'a pending fall frame cannot be scanned');
+    if (scans === 0) {
+      assert.equal(board.getSpool(slowFalling.id).row, ROWS - 4);
+      assert.equal(initialFallFrames, ROWS - 6, 'every initial fall frame must finish first');
+    }
+    scans += 1;
+    return scan();
+  };
+  game.setState(STATES.RESOLVING);
+  const finished = game.resolve().then(() => ({ finished: true }));
+  let steps = 0;
+  while (true) {
+    const step = await Promise.race([harness.nextFrame(), finished]);
+    if (step.finished) break;
+    assert.ok(++steps < 100);
+    if (clears.length === 0) {
+      // The first gravity tick fills the bottom row, but the separate spool
+      // still needs several ticks. Neither full row may clear during that wait.
+      assert.equal(step.frame.kind, 'fall');
+      assert.deepEqual(scan(), fullRows);
+      assert.equal(scans, 0);
+      assert.equal(game.score, 0);
+      initialFallFrames += 1;
+    } else if (step.frame.kind === 'clear') {
+      assert.equal(scans, 1);
+      assert.deepEqual(step.frame.rows, fullRows);
+      assert.deepEqual(scan(), fullRows);
+      assert.equal(game.score, 0);
+    }
+    step.finish();
+  }
+
+  assert.deepEqual(clears, [{ rows: fullRows, chain: 1, points: 200 }]);
+  assert.equal(frames.filter(frame => frame.kind === 'clear').length, 1);
+  assert.equal(game.score, 200);
+  assert.deepEqual(scan(), []);
   board.assertValid();
 });
 

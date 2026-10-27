@@ -70,6 +70,8 @@
       await this.fall(onlyId);
       let chain = 0;
       while (true) {
+        // Capture ALL full rows across the settled board before changing it.
+        // One batch shares one animation, one chain step, and one score award.
         const rows = this.board.fullRows();
         if (!rows.length) return;
         chain += 1;
@@ -80,6 +82,7 @@
         this.board.clearRows(rows);
         this.score += points;
         this.notify();
+        // Gravity resumes only after the entire batch has disappeared.
         await this.fall();
       }
     }
@@ -142,8 +145,9 @@ if (typeof document !== "undefined") (() => {
     animate: animate,
     onChange: updateUI,
     onClear: ({ rows, chain, points }) => {
-      popup = { row: Math.min(...rows), chain, points, start: performance.now() };
-      setStatus(chain > 1 ? `Purrfect! Chain ${chain} · +${points}` : `A little more room! +${points}`, true);
+      popup = { row: Math.min(...rows), rowCount: rows.length, chain, points, start: performance.now() };
+      const clearLabel = rows.length > 1 ? `${rows.length} rows together!` : "A little more room!";
+      setStatus(`${clearLabel}${chain > 1 ? ` Chain ${chain} ·` : ""} +${points}`, true);
     }
   });
 
@@ -306,7 +310,8 @@ if (typeof document !== "undefined") (() => {
         ctx.strokeStyle="#80957744"; ctx.lineWidth=1; ctx.stroke();
         drawPaw(ctx, COLS*cell/2-width/2+19,y+17,16,"#b98a59");
         ctx.fillStyle="#5c7653"; ctx.font=`bold ${Math.min(12,cell*.44)}px 'Trebuchet MS', sans-serif`; ctx.textAlign="center"; ctx.textBaseline="middle";
-        ctx.fillText(popup.chain > 1 ? `PURRFECT ×${popup.chain}  +${popup.points}` : `MEOW-VELOUS!  +${popup.points}`,COLS*cell/2+11,y+17); ctx.restore();
+        const clearLabel = popup.rowCount > 1 ? `${popup.rowCount} ROWS` : popup.chain > 1 ? "PURRFECT" : "MEOW-VELOUS!";
+        ctx.fillText(`${clearLabel}${popup.chain > 1 ? ` ×${popup.chain}` : ""}  +${popup.points}`,COLS*cell/2+11,y+17); ctx.restore();
       }
     }
   }

@@ -163,6 +163,7 @@
 
     fullRows() {
       const full = [];
+      // Scan the whole grid without mutating it or stopping at the first match.
       for (let row = 0; row < ROWS; row += 1) {
         if (this.grid[row].every((id) => id !== null)) full.push(row);
       }
@@ -178,6 +179,8 @@
       }
       const ids = new Set(uniqueRows.flatMap((row) => this.grid[row]));
       const removed = [];
+      // Remove the complete batch synchronously. No gravity, rendering, or
+      // callbacks run between removals, including rows far apart on the board.
       for (const id of ids) {
         const spool = this._requireSpool(id);
         removed.push({ ...spool });

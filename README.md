@@ -70,10 +70,10 @@ A valid turn follows this order:
 
 1. Commit a horizontal move that ends at a different column.
 2. Let **only the dragged spool** fall. It moves down one cell only when every cell directly below it is empty. One supporting cell stops the whole spool, so partial overhang is allowed.
-3. Clear every full row simultaneously, then apply gravity to **all remaining spools**. Repeat full-row checks and gravity until stable. Horizontal spools disappear as complete objects; rows are never compressed by shifting individual cells.
+3. After falling finishes, scan **the entire board** and collect **all full rows** before changing any cells. Clear that complete batch simultaneously in one animation, even when the rows are not adjacent, and award their points in one chain step. Only then apply gravity to **all remaining spools**. Repeat the whole-board scan after falling finishes again. Horizontal spools disappear as complete objects; rows are never compressed by shifting individual cells.
 4. Insert **exactly one** new bottom row and move the existing board up one cell. The incoming row contains at least two independent spools, occupies four to eight cells, and always has an empty cell. Its preview is shown before the turn.
 5. If the upward shift would push any spool beyond the top, the game ends immediately, before any possible gravity rescue. The engine reports overflow without committing invalid coordinates.
-6. Otherwise, apply gravity to all spools, clear full rows, and repeat until stable. Return control to the player without inserting another row.
+6. Otherwise, apply gravity to all spools, then use the same whole-board scan and simultaneous batch clear described above. Repeat until stable. Return control to the player without inserting another row.
 
 The first clear step awards **100 points per row**. Each subsequent chain step in that same resolution adds **50 points per row**: 100, 150, 200, and so on. Multiple rows cleared together use the same multiplier. The resolution before insertion and the resolution after insertion are separate chains, each starting at 100. A cat-themed popup shows earned points. Personal best is saved with `localStorage` when available; blocked storage does not prevent play. The current board and score are not saved between page loads.
 
