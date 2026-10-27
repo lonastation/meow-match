@@ -2,7 +2,7 @@
 "use strict";
 
 const CACHE_PREFIX = "meow-match-offline:" + self.registration.scope + ":";
-const CACHE_NAME = CACHE_PREFIX + "v7";
+const CACHE_NAME = CACHE_PREFIX + "v8";
 const LOCAL_FILES = [
   "index.html",
   "style.css",

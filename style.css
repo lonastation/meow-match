@@ -43,7 +43,7 @@ button {
   cursor: pointer
 }
 
-button:focus-visible, a:focus-visible, canvas:focus-visible {
+button:focus-visible, a:focus-visible {
   outline: 3px solid #83a489;
   outline-offset: 4px
 }
@@ -365,7 +365,8 @@ button svg {
   -webkit-user-select: none;
   user-select: none;
   cursor: grab;
-  outline-offset: -3px
+  /* Focus stays on the game for keyboard input without changing its frame. */
+  outline: none
 }
 
 #board.dragging {
