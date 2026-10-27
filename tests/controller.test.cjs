@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Board } = require('../engine.js');
+const { Board, ROWS } = require('../engine.js');
 const { Game, STATES } = require('../game.js');
 
 const NEXT_ROW = Object.freeze([
@@ -38,25 +38,25 @@ async function turn(game, id, col) {
 // finally frees two narrow bars to fill the gaps in the bottom row.
 function threeChainFixture() {
   const board = new Board();
-  add(board, 15, 0, 1);
-  add(board, 15, 4, 1);
-  add(board, 15, 8, 1);
-  add(board, 14, 0, 4);
-  add(board, 14, 4, 1);
-  add(board, 13, 0, 4);
-  add(board, 13, 4, 5);
-  add(board, 12, 1, 3);
-  add(board, 12, 5, 4);
-  const selected = add(board, 11, 4, 3);
+  add(board, ROWS - 1, 0, 1);
+  add(board, ROWS - 1, 4, 1);
+  add(board, ROWS - 1, 8, 1);
+  add(board, ROWS - 2, 0, 4);
+  add(board, ROWS - 2, 4, 1);
+  add(board, ROWS - 3, 0, 4);
+  add(board, ROWS - 3, 4, 5);
+  add(board, ROWS - 4, 1, 3);
+  add(board, ROWS - 4, 5, 4);
+  const selected = add(board, ROWS - 5, 4, 3);
   return { board, selected };
 }
 
 function bothResolutionFixture() {
   const board = new Board();
-  add(board, 15, 0, 4);
-  const selected = add(board, 15, 8, 1);
-  add(board, 14, 0, 5);
-  add(board, 14, 5, 4);
+  add(board, ROWS - 1, 0, 4);
+  const selected = add(board, ROWS - 1, 8, 1);
+  add(board, ROWS - 2, 0, 5);
+  add(board, ROWS - 2, 5, 4);
   const nextRow = [{ col: 4, length: 3, color: '#a8caa5' }, { col: 8, length: 1, color: '#a6c8df' }];
   return { board, selected, nextRow };
 }
@@ -114,29 +114,29 @@ test('one valid drag resolves three chain steps at 100, 150, and 200, then inser
   assert.equal(game.moves, 1);
   assert.equal(game.state, STATES.IDLE);
   assert.deepEqual(clears.map(({ rows, chain, points }) => ({ rows, chain, points })), [
-    { rows: [13], chain: 1, points: 100 },
-    { rows: [14], chain: 2, points: 150 },
-    { rows: [15], chain: 3, points: 200 },
+    { rows: [ROWS - 3], chain: 1, points: 100 },
+    { rows: [ROWS - 2], chain: 2, points: 150 },
+    { rows: [ROWS - 1], chain: 3, points: 200 },
   ]);
   assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
   const insertIndex = frames.findIndex(frame => frame.kind === 'insert');
   assert.equal(frames.slice(0, insertIndex).filter(frame => frame.kind === 'clear').length, 3);
   assert.equal(board.spools.size, NEXT_ROW.length);
-  assert.ok(board.snapshot().every(spool => spool.row === 15));
+  assert.ok(board.snapshot().every(spool => spool.row === ROWS - 1));
   assert.deepEqual([...new Set(changes.map(change => change.score))], [0, 100, 250, 450]);
   board.assertValid();
 });
 
 test('a simultaneous clear awards the current step value for each cleared row', async () => {
   const board = new Board();
-  for (const row of [14, 15]) {
+  for (const row of [ROWS - 2, ROWS - 1]) {
     add(board, row, 0, 4);
     add(board, row, 4, 5);
   }
-  const selected = add(board, 13, 0, 1);
+  const selected = add(board, ROWS - 3, 0, 1);
   const { game, clears, frames } = captureGame(board);
   assert.equal(await turn(game, selected.id, 1), true);
-  assert.deepEqual(clears, [{ rows: [14, 15], chain: 1, points: 200 }]);
+  assert.deepEqual(clears, [{ rows: [ROWS - 2, ROWS - 1], chain: 1, points: 200 }]);
   assert.equal(game.score, 200);
   assert.equal(game.moves, 1);
   assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
@@ -149,8 +149,8 @@ test('the post-insertion resolution starts a fresh chain at 100 points', async (
   game.nextRow = nextRow;
   assert.equal(await turn(game, selected.id, 7), true);
   assert.deepEqual(clears, [
-    { rows: [14], chain: 1, points: 100 },
-    { rows: [15], chain: 1, points: 100 },
+    { rows: [ROWS - 2], chain: 1, points: 100 },
+    { rows: [ROWS - 1], chain: 1, points: 100 },
   ]);
   assert.equal(game.score, 200);
   assert.equal(game.moves, 1);
@@ -162,7 +162,7 @@ test('the post-insertion resolution starts a fresh chain at 100 points', async (
 
 test('a valid turn without clearing still inserts exactly one new row', async () => {
   const board = new Board();
-  const selected = add(board, 15, 1, 2);
+  const selected = add(board, ROWS - 1, 1, 2);
   const { game, clears, frames } = captureGame(board);
   assert.equal(await turn(game, selected.id, 3), true);
   assert.equal(game.score, 0);
@@ -177,7 +177,7 @@ test('a valid turn without clearing still inserts exactly one new row', async ()
 
 test('all spools resume gravity after insertion, while release initially drops only the selected spool', async () => {
   const board = new Board();
-  const selected = add(board, 15, 0, 1);
+  const selected = add(board, ROWS - 1, 0, 1);
   const floating = add(board, 4, 7, 1);
   const { game, frames } = captureGame(board);
   game.nextRow = [{ col: 1, length: 1, color: '#a8caa5' }, { col: 5, length: 1, color: '#a6c8df' }];
@@ -185,8 +185,8 @@ test('all spools resume gravity after insertion, while release initially drops o
   const insertion = frames.find(frame => frame.kind === 'insert');
   assert.equal(insertion.before.find(spool => spool.id === floating.id).row, 4);
   assert.equal(insertion.after.find(spool => spool.id === floating.id).row, 3);
-  assert.equal(board.getSpool(floating.id).row, 15);
-  assert.equal(board.getSpool(selected.id).row, 14);
+  assert.equal(board.getSpool(floating.id).row, ROWS - 1);
+  assert.equal(board.getSpool(selected.id).row, ROWS - 2);
   assert.ok(frames.slice(frames.indexOf(insertion) + 1).some(frame => frame.kind === 'fall'));
   board.assertValid();
 });
@@ -242,7 +242,7 @@ test('every animation phase locks dragging, cancellation, reset, and duplicate r
 test('top overflow ends the turn before insertion or post-insertion gravity can hide it', async () => {
   const board = new Board();
   const top = add(board, 0, 0, 1);
-  const selected = add(board, 15, 3, 1);
+  const selected = add(board, ROWS - 1, 3, 1);
   const { game, frames, clears } = captureGame(board);
   assert.equal(await turn(game, selected.id, 4), true);
   assert.equal(game.state, STATES.GAME_OVER);
@@ -271,16 +271,16 @@ test('moving a top-row spool out of danger can fall before the overflow check', 
   assert.equal(await turn(game, selected.id, 3), true);
   assert.equal(game.state, STATES.IDLE);
   assert.equal(game.moves, 1);
-  assert.equal(board.getSpool(selected.id).row, 15);
+  assert.equal(board.getSpool(selected.id).row, ROWS - 1);
   assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
   const insertIndex = frames.findIndex(frame => frame.kind === 'insert');
-  assert.equal(frames.slice(0, insertIndex).filter(frame => frame.kind === 'fall').length, 15);
+  assert.equal(frames.slice(0, insertIndex).filter(frame => frame.kind === 'fall').length, ROWS - 1);
   board.assertValid();
 });
 
 test('drag acquisition and reset obey the idle and game-over boundaries', () => {
   const board = new Board();
-  const selected = add(board, 10, 0, 2);
+  const selected = add(board, ROWS - 6, 0, 2);
   const { game } = captureGame(board);
   assert.equal(game.beginDrag(99999), false);
   assert.equal(game.moveDrag(1), false);

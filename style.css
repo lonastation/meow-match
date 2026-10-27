@@ -607,14 +607,14 @@ button svg {
 
 @media (max-width: 759px) {
   body {
-    padding-left: max(13px, env(safe-area-inset-left));
-    padding-right: max(13px, env(safe-area-inset-right));
+    padding-left: max(6px, env(safe-area-inset-left));
+    padding-right: max(6px, env(safe-area-inset-right));
     padding-bottom: env(safe-area-inset-bottom)
   }
 
   .site-header {
     height: 58px;
-    max-width: 430px;
+    max-width: 520px;
     border-bottom: 0
   }
 
@@ -638,7 +638,7 @@ button svg {
   .layout {
     display: flex;
     width: 100%;
-    max-width: 430px;
+    max-width: 520px;
     justify-content: center;
     align-items: stretch;
     gap: 0;
@@ -652,7 +652,7 @@ button svg {
   .game-shell {
     width: 100%;
     border-radius: 15px;
-    padding: 12px 14px 9px;
+    padding: 12px 6px 9px;
     max-height: none
   }
 
@@ -714,7 +714,7 @@ button svg {
   }
 
   .game-shell {
-    padding: 8px 11px
+    padding: 8px 6px
   }
 
   .scoreboard {

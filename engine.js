@@ -8,7 +8,7 @@
   "use strict";
 
   const COLS = 9;
-  const ROWS = 16;
+  const ROWS = 12;
   const COLORS = Object.freeze(["#f59ba7", "#f4c776", "#a8caa5", "#a6c8df", "#c5b1e0"]);
 
   function emptyGrid() {
@@ -86,9 +86,9 @@
       this.nextId = 1;
 
       // A shared empty column prevents automatic opening clears. A supported
-      // column keeps the opening between five and seven rows high after settling.
+      // column keeps the opening exactly three rows high after settling.
       // All other cells, piece boundaries, lengths, and colors are randomized.
-      const height = 5 + this._int(3);
+      const height = 3;
       const gap = this._int(COLS);
       const supportChoice = this._int(COLS - 1);
       const support = supportChoice >= gap ? supportChoice + 1 : supportChoice;
@@ -259,7 +259,7 @@
 
     assertValid() {
       if (this.grid.length !== ROWS || this.grid.some((row) => row.length !== COLS)) {
-        throw new Error("Board must contain exactly 9 columns and 16 rows.");
+        throw new Error("Board must contain exactly 9 columns and 12 rows.");
       }
       const counts = new Map();
       for (let row = 0; row < ROWS; row += 1) {

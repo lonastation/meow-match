@@ -128,6 +128,7 @@ if (typeof document !== "undefined") (() => {
   const previewCtx = preview.getContext("2d");
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   let cell = 28;
+  let rowHeight = 28;
   let dpr = 1;
   let tween = null;
   let popup = null;
@@ -194,10 +195,10 @@ if (typeof document !== "undefined") (() => {
   }
 
   function drawSpool(context, spool, unitX, unitY, selected = false, alpha = 1) {
-    const x = spool.col * unitX + 2;
-    const y = spool.row * unitY + 2.5;
-    const w = spool.length * unitX - 4;
-    const h = unitY - 5;
+    const x = spool.col * unitX + 1.5;
+    const y = spool.row * unitY + 2;
+    const w = spool.length * unitX - 3;
+    const h = unitY - 4;
     if (w <= 0 || h <= 0) return;
     context.save();
     context.globalAlpha = alpha;
@@ -243,23 +244,23 @@ if (typeof document !== "undefined") (() => {
   }
 
   function drawBackground() {
-    ctx.fillStyle = "#efeee3"; ctx.fillRect(0, 0, cell * COLS, cell * ROWS);
+    ctx.fillStyle = "#efeee3"; ctx.fillRect(0, 0, cell * COLS, rowHeight * ROWS);
     for (let row = 0; row < ROWS; row += 1) for (let col = 0; col < COLS; col += 1) {
       ctx.fillStyle = (row + col) % 2 ? "#f5f3e94d" : "#ffffff12";
-      ctx.fillRect(col * cell, row * cell, cell, cell);
+      ctx.fillRect(col * cell, row * rowHeight, cell, rowHeight);
     }
     ctx.strokeStyle = "#d8d9c85c"; ctx.lineWidth = .65; ctx.beginPath();
-    for (let col = 1; col < COLS; col += 1) { ctx.moveTo(col * cell, 0); ctx.lineTo(col * cell, ROWS * cell); }
-    for (let row = 1; row < ROWS; row += 1) { ctx.moveTo(0, row * cell); ctx.lineTo(COLS * cell, row * cell); }
+    for (let col = 1; col < COLS; col += 1) { ctx.moveTo(col * cell, 0); ctx.lineTo(col * cell, ROWS * rowHeight); }
+    for (let row = 1; row < ROWS; row += 1) { ctx.moveTo(0, row * rowHeight); ctx.lineTo(COLS * cell, row * rowHeight); }
     ctx.stroke();
     // Faint paw prints and a sleepy cat live in the empty space behind the grid.
-    drawPaw(ctx, cell * 7.4, cell * 2.2, cell * .65, "#aab69a29", -.35);
-    drawPaw(ctx, cell * 6.7, cell * 3.4, cell * .65, "#aab69a24", .2);
-    const cx = cell * 4.5, cy = cell * 5.2, r = cell * .6;
+    drawPaw(ctx, cell * 7.4, rowHeight * 2.2, cell * .65, "#aab69a29", -.35);
+    drawPaw(ctx, cell * 6.7, rowHeight * 3.4, cell * .65, "#aab69a24", .2);
+    const cx = cell * 4.5, cy = rowHeight * 5.2, r = cell * .6;
     ctx.save(); ctx.translate(cx, cy); ctx.strokeStyle = "#a1ac922c"; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(-r, -.2*r); ctx.lineTo(-r, -r); ctx.lineTo(-.35*r, -.55*r); ctx.quadraticCurveTo(0,-.7*r,.35*r,-.55*r); ctx.lineTo(r,-r); ctx.lineTo(r,-.2*r); ctx.bezierCurveTo(1.8*r,1.5*r,-1.8*r,1.5*r,-r,-.2*r); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-.65*r,.1*r); ctx.quadraticCurveTo(-.4*r,.35*r,-.15*r,.1*r); ctx.moveTo(.15*r,.1*r); ctx.quadraticCurveTo(.4*r,.35*r,.65*r,.1*r); ctx.stroke(); ctx.restore();
-    ctx.save(); ctx.strokeStyle = "#c6977761"; ctx.setLineDash([3,5]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(5,cell); ctx.lineTo(COLS*cell-5,cell); ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.strokeStyle = "#c6977761"; ctx.setLineDash([3,5]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(5,rowHeight); ctx.lineTo(COLS*cell-5,rowHeight); ctx.stroke(); ctx.restore();
   }
 
   function render(now) {
@@ -280,26 +281,26 @@ if (typeof document !== "undefined") (() => {
       const s = game.board.getSpool(game.drag.id);
       const bounds = game.board.dragBounds(s.id);
       ctx.fillStyle = "#7b977a1c";
-      ctx.fillRect(bounds.min*cell, s.row*cell, (bounds.max-bounds.min+s.length)*cell, cell);
+      ctx.fillRect(bounds.min*cell, s.row*rowHeight, (bounds.max-bounds.min+s.length)*cell, rowHeight);
     }
     spools.forEach((s) => {
       let alpha = 1;
       if (tween && tween.kind === "clear" && tween.rows.includes(s.row)) alpha = 1 - t * .9;
-      drawSpool(ctx, s, cell, cell, (game.drag && game.drag.id === s.id) || selectedId === s.id, alpha);
+      drawSpool(ctx, s, cell, rowHeight, (game.drag && game.drag.id === s.id) || selectedId === s.id, alpha);
     });
     if (tween && tween.kind === "clear") {
-      tween.rows.forEach((row) => { ctx.fillStyle = `rgba(255,250,217,${Math.sin(t*Math.PI)*.8})`; ctx.fillRect(0,row*cell,COLS*cell,cell); });
+      tween.rows.forEach((row) => { ctx.fillStyle = `rgba(255,250,217,${Math.sin(t*Math.PI)*.8})`; ctx.fillRect(0,row*rowHeight,COLS*cell,rowHeight); });
     }
     if (game.drag) {
       const s = game.board.getSpool(game.drag.id);
-      drawPaw(ctx, (s.col+s.length/2)*cell, (s.row+.48)*cell, Math.min(22,cell*.8), "#456047d9", -.15);
+      drawPaw(ctx, (s.col+s.length/2)*cell, (s.row+.48)*rowHeight, Math.min(22,cell*.8), "#456047d9", -.15);
     }
     if (popup) {
       const progress = (now - popup.start) / 950;
       if (progress >= 1) popup = null;
       else {
         const width = Math.min(cell*7, 205), height = 32;
-        const y = Math.max(12, Math.min((popup.row-.8)*cell, ROWS*cell-48)) - progress*cell*.55;
+        const y = Math.max(12, Math.min((popup.row-.8)*rowHeight, ROWS*rowHeight-48)) - progress*rowHeight*.55;
         ctx.save(); ctx.globalAlpha = Math.min(1, (1-progress)*3);
         ctx.fillStyle = "#fcfbf3f2"; rounded(ctx,(COLS*cell-width)/2,y,width,height,16); ctx.fill();
         ctx.strokeStyle="#80957744"; ctx.lineWidth=1; ctx.stroke();
@@ -325,8 +326,11 @@ if (typeof document !== "undefined") (() => {
     // before a resize can reinterpret an unchanged finger as a horizontal move.
     if (pointer) finishPointer(null, true);
     const region = $("board-region");
+    // Use the largest shared cell size that fits both axes, preserving square
+    // cells on every screen while keeping the whole 9-by-12 board visible.
     cell = Math.max(1, Math.min(region.clientWidth / COLS, region.clientHeight / ROWS));
-    const width = cell * COLS, height = cell * ROWS;
+    rowHeight = cell;
+    const width = cell * COLS, height = rowHeight * ROWS;
     dpr = window.devicePixelRatio || 1;
     $("board-wrap").style.width = `${width}px`; $("board-wrap").style.height = `${height}px`;
     canvas.style.width = `${width}px`; canvas.style.height = `${height}px`;

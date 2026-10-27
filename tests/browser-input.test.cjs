@@ -5,6 +5,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { COLS, ROWS } = require('../engine.js');
+
+const CELL = 30;
+const BOTTOM_CENTER_Y = (ROWS - 0.5) * CELL;
 
 const ROOT = path.resolve(__dirname, '..');
 const ENGINE_SOURCE = fs.readFileSync(path.join(ROOT, 'engine.js'), 'utf8');
@@ -57,8 +61,8 @@ function browserHarness() {
         return {
           left: 0,
           top: 0,
-          width: parseFloat(this.style.width) || 270,
-          height: parseFloat(this.style.height) || 480,
+          width: parseFloat(this.style.width) || COLS * CELL,
+          height: parseFloat(this.style.height) || ROWS * CELL,
         };
       },
       setPointerCapture(pointerId) { capturedPointers.add(pointerId); },
@@ -77,8 +81,8 @@ function browserHarness() {
   }
 
   const region = getElement('board-region');
-  region.clientWidth = 270;
-  region.clientHeight = 480;
+  region.clientWidth = COLS * CELL;
+  region.clientHeight = ROWS * CELL;
   const document = Object.assign(eventTarget(), {
     getElementById: getElement,
     querySelector: () => getElement('brand'),
@@ -124,14 +128,14 @@ function browserHarness() {
   // A single movable bottom spool makes an unexpected turn or row insertion
   // unambiguous. The next row supports its target column after a valid move.
   game.board = new sandbox.MeowEngine.Board();
-  const spool = game.board.addSpool({ row: 15, col: 4, length: 1, color: '#f59ba7' });
+  const spool = game.board.addSpool({ row: ROWS - 1, col: 4, length: 1, color: '#f59ba7' });
   game.nextRow = [
     { col: 0, length: 2, color: '#a8caa5' },
     { col: 6, length: 2, color: '#a6c8df' },
   ];
   game.notify();
 
-  function pointer(type, x, y = 465, pointerType = 'touch') {
+  function pointer(type, x, y = BOTTOM_CENTER_Y, pointerType = 'touch') {
     getElement('board').emit(type, {
       pointerId: 1,
       pointerType,
@@ -186,7 +190,7 @@ test('resizing during a touch gesture rolls back the drag and ignores its later 
 
     // Without cancellation, the same physical X coordinate is interpreted in
     // the new 180px board and a stationary release can consume a turn.
-    app.resize(180, 320);
+    app.resize(COLS * 20, ROWS * 20);
     assert.equal(game.state, 'IDLE');
     app.pointer('pointerup', moveBeforeResize ? 195 : 135);
 
@@ -209,7 +213,7 @@ test('pointercancel restores a moved touch spool without gravity or a new row', 
   app.pointer('pointerdown', 135);
   app.pointer('pointermove', 225, 100);
   assert.equal(game.board.getSpool(spool.id).col, 7);
-  assert.equal(game.board.getSpool(spool.id).row, 15, 'vertical motion never changes its row');
+  assert.equal(game.board.getSpool(spool.id).row, ROWS - 1, 'vertical motion never changes its row');
   assert.equal(game.state, 'DRAGGING');
 
   app.pointer('pointercancel', 225, 100);
@@ -231,11 +235,11 @@ test('touch and mouse use the same pointer path and a valid release inserts exac
     const { game, spool } = app;
     const nextRow = game.nextRow;
 
-    app.pointer('pointerdown', 135, 465, pointerType);
+    app.pointer('pointerdown', 135, BOTTOM_CENTER_Y, pointerType);
     app.pointer('pointermove', 195, 100, pointerType);
     assert.equal(game.state, 'DRAGGING');
     assert.equal(game.board.getSpool(spool.id).col, 6);
-    assert.equal(game.board.getSpool(spool.id).row, 15);
+    assert.equal(game.board.getSpool(spool.id).row, ROWS - 1);
     assert.equal(game.moves, 0, 'a drag alone must not consume a turn');
 
     app.pointer('pointerup', 195, 100, pointerType);
@@ -244,7 +248,7 @@ test('touch and mouse use the same pointer path and a valid release inserts exac
     assert.equal(app.getElement('restart-button').disabled, true);
 
     // A second input attempt during animation must be ignored.
-    app.pointer('pointerdown', 195, 465, pointerType);
+    app.pointer('pointerdown', 195, BOTTOM_CENTER_Y, pointerType);
     assert.equal(game.drag, null);
     await app.finishAnimations();
 
@@ -253,11 +257,51 @@ test('touch and mouse use the same pointer path and a valid release inserts exac
     assert.equal(game.score, 0);
     assert.equal(game.board.spools.size, 3, 'one existing spool plus exactly two new spools');
     assert.equal(game.board.getSpool(spool.id).col, 6);
-    assert.equal(game.board.getSpool(spool.id).row, 14, 'the new row supports the lifted spool');
-    assert.equal(game.board.grid[15].filter((id) => id !== null).length, 4);
+    assert.equal(game.board.getSpool(spool.id).row, ROWS - 2, 'the new row supports the lifted spool');
+    assert.equal(game.board.grid[ROWS - 1].filter((id) => id !== null).length, 4);
     assert.notEqual(game.nextRow, nextRow, 'the next-row preview advances once');
     assert.equal(app.getElement('help-button').disabled, false);
     assert.equal(app.getElement('restart-button').disabled, false);
+    game.board.assertValid();
+  }
+});
+
+test('square cells fit width- and height-limited regions and preserve touch hit testing', async () => {
+  const cases = [
+    { regionWidth: 360, regionHeight: 600, boardWidth: 360, boardHeight: 480, cellSize: 40, startX: 180, endX: 260, y: 460 },
+    { regionWidth: 360, regionHeight: 360, boardWidth: 270, boardHeight: 360, cellSize: 30, startX: 135, endX: 195, y: 345 },
+  ];
+
+  for (const size of cases) {
+    const app = browserHarness();
+    const { game, spool } = app;
+    const nextRow = game.nextRow;
+
+    app.resize(size.regionWidth, size.regionHeight);
+    const bounds = app.getElement('board').getBoundingClientRect();
+    assert.equal(bounds.width, size.boardWidth);
+    assert.equal(bounds.height, size.boardHeight);
+    assert.equal(bounds.width / COLS, size.cellSize);
+    assert.equal(bounds.height / ROWS, size.cellSize);
+    assert.ok(bounds.width <= size.regionWidth && bounds.height <= size.regionHeight);
+    app.pointer('pointerdown', size.startX, size.y);
+    assert.equal(game.state, 'DRAGGING');
+    app.pointer('pointermove', size.endX, size.y);
+    assert.equal(game.board.getSpool(spool.id).col, 6);
+    assert.equal(game.board.getSpool(spool.id).row, ROWS - 1);
+    assert.equal(game.moves, 0);
+
+    app.pointer('pointerup', size.endX, size.y);
+    await app.finishAnimations();
+
+    assert.equal(game.state, 'IDLE');
+    assert.equal(game.moves, 1);
+    assert.equal(game.score, 0);
+    assert.equal(game.board.getSpool(spool.id).col, 6);
+    assert.equal(game.board.getSpool(spool.id).row, ROWS - 2);
+    assert.equal(game.board.spools.size, 3, 'exactly one row of two new spools was inserted');
+    assert.equal(game.board.grid[ROWS - 1].filter(id => id !== null).length, 4);
+    assert.notEqual(game.nextRow, nextRow);
     game.board.assertValid();
   }
 });

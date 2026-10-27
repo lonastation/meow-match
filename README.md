@@ -62,7 +62,9 @@ Input is locked during falling, clearing, scoring, and insertion. Interrupted po
 
 ## Rules and deliberate choices
 
-The board is exactly **9 columns × 16 rows**. Each cell stores either `null` or one spool ID; the associated metadata records its row, column, length, and color. Spools occupy one horizontal row, have lengths from 1 through 5, and keep their shape for their entire lifetime. The initial position contains five to seven randomized sparse bottom rows. One shared empty column prevents an opening clear, and a supported column preserves the opening stack height. Gravity settles the opening before input begins.
+The board is exactly **9 columns × 12 rows**. Each cell stores either `null` or one spool ID; the associated metadata records its row, column, length, and color. Spools occupy one horizontal row, have lengths from 1 through 5, and keep their shape for their entire lifetime. Every new game starts with exactly three randomized sparse bottom rows; the nine rows above them are empty. One shared empty column prevents an opening clear, and a supported column preserves the three-row stack after gravity settles the opening.
+
+On phones, the page and game frame each use only 6px of horizontal padding (plus any device safe area). Every cell is square. The board uses the largest shared cell size that fits both the available width and height, keeping all nine columns and twelve rows visible. Spools and their full-cell touch targets scale together; the grid rules and horizontal movement are unchanged.
 
 A valid turn follows this order:
 
