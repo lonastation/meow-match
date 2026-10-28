@@ -253,7 +253,7 @@ test('a whole-board scan clears nonadjacent full rows in one animation and one m
   board.assertValid();
 });
 
-test('global gravity finishes every fall animation before scanning already-full nonadjacent rows', async () => {
+test('global gravity finishes its continuous fall phase before scanning already-full nonadjacent rows', async () => {
   const board = new Board();
   const fullRows = [ROWS - 3, ROWS - 1];
   add(board, ROWS - 1, 0, 4);
@@ -268,13 +268,13 @@ test('global gravity finishes every fall animation before scanning already-full 
   const { game, frames, clears } = harness;
   const scan = board.fullRows.bind(board);
   let scans = 0;
-  let initialFallFrames = 0;
+  let initialFallPhases = 0;
 
   board.fullRows = () => {
     assert.equal(harness.pending, null, 'a pending fall frame cannot be scanned');
     if (scans === 0) {
       assert.equal(board.getSpool(slowFalling.id).row, ROWS - 4);
-      assert.equal(initialFallFrames, ROWS - 6, 'every initial fall frame must finish first');
+      assert.equal(initialFallPhases, 1, 'the entire continuous fall phase must finish first');
     }
     scans += 1;
     return scan();
@@ -287,13 +287,16 @@ test('global gravity finishes every fall animation before scanning already-full 
     if (step.finished) break;
     assert.ok(++steps < 100);
     if (clears.length === 0) {
-      // The first gravity tick fills the bottom row, but the separate spool
-      // still needs several ticks. Neither full row may clear during that wait.
+      // The final grid is ready, but its complete visual fall must finish
+      // before either full row can be scanned or cleared.
       assert.equal(step.frame.kind, 'fall');
+      assert.equal(step.frame.before.find(spool => spool.id === slowFalling.id).row, 2);
+      assert.equal(step.frame.after.find(spool => spool.id === slowFalling.id).row, ROWS - 4);
+      assert.ok(step.frame.moved.some(move => move.id === slowFalling.id && move.fromRow === 2 && move.toRow === ROWS - 4));
       assert.deepEqual(scan(), fullRows);
       assert.equal(scans, 0);
       assert.equal(game.score, 0);
-      initialFallFrames += 1;
+      initialFallPhases += 1;
     } else if (step.frame.kind === 'clear') {
       assert.equal(scans, 1);
       assert.deepEqual(step.frame.rows, fullRows);
@@ -508,7 +511,10 @@ test('moving a top-row spool out of danger can fall before the overflow check', 
   assert.equal(board.getSpool(selected.id).row, ROWS - 1);
   assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
   const insertIndex = frames.findIndex(frame => frame.kind === 'insert');
-  assert.equal(frames.slice(0, insertIndex).filter(frame => frame.kind === 'fall').length, ROWS - 1);
+  const falls = frames.slice(0, insertIndex).filter(frame => frame.kind === 'fall');
+  assert.equal(falls.length, 1, 'a long drop is one uninterrupted animation');
+  assert.deepEqual(falls[0].moved, [{ id: selected.id, fromRow: 0, toRow: ROWS - 1 }]);
+  assert.equal(falls[0].maxDrop, ROWS - 1);
   board.assertValid();
 });
 

@@ -10,6 +10,14 @@
   const { Board } = engine;
   const STATES = Object.freeze({ IDLE: "IDLE", DRAGGING: "DRAGGING", RESOLVING: "RESOLVING", INSERTING_ROW: "INSERTING_ROW", GAME_OVER: "GAME_OVER" });
 
+  function sampleFallRow(fromRow, toRow, maxDrop, progress) {
+    const t = Math.max(0, Math.min(1, progress));
+    const travel = maxDrop * t * t;
+    // Every spool shares one accelerating displacement and stops at its own
+    // landing. This keeps stacked bars ordered even when their drops differ.
+    return fromRow + Math.min(toRow - fromRow, travel);
+  }
+
   class Game {
     constructor({ board = new Board(), animate = async () => {}, onChange = () => {}, onClear = () => {} } = {}) {
       this.board = board;
@@ -45,7 +53,7 @@
     moveDrag(col) {
       if (this.state !== STATES.DRAGGING) return false;
       const changed = this.board.moveSpool(this.drag.id, col);
-      this.notify();
+      if (changed) this.notify();
       return changed;
     }
     cancelDrag() {
@@ -57,12 +65,24 @@
       return true;
     }
     async fall() {
-      while (true) {
-        const before = this.board.snapshot();
-        const moved = this.board.gravityStep();
-        if (!moved.length) return;
-        await this.animate({ kind: "fall", before, after: this.board.snapshot(), moved, duration: 150 });
+      const before = this.board.snapshot();
+      // Resolve the authoritative grid once, then animate the entire fall as
+      // one continuous phase. Input and row scanning stay locked until it ends.
+      this.board.settle();
+      const after = this.board.snapshot();
+      const moved = [];
+      let maxDrop = 0;
+      for (const spool of before) {
+        const toRow = this.board.getSpool(spool.id).row;
+        const drop = toRow - spool.row;
+        if (drop > 0) {
+          moved.push({ id: spool.id, fromRow: spool.row, toRow });
+          maxDrop = Math.max(maxDrop, drop);
+        }
       }
+      if (!moved.length) return;
+      const duration = Math.max(150, Math.min(300, 90 * Math.sqrt(maxDrop)));
+      await this.animate({ kind: "fall", before, after, moved, maxDrop, duration });
     }
     async resolve() {
       // A slide can remove another spool's support. Settle the WHOLE board
@@ -119,19 +139,21 @@
       return true;
     }
   }
-  return Object.freeze({ Game, STATES });
+  return Object.freeze({ Game, STATES, sampleFallRow });
 });
 
 /* Browser view: the grid is never inferred from drawn pixels or tween positions. */
 if (typeof document !== "undefined") (() => {
   "use strict";
   const { COLS, ROWS } = MeowEngine;
-  const { Game, STATES } = MeowGame;
+  const { Game, STATES, sampleFallRow } = MeowGame;
   const $ = (id) => document.getElementById(id);
   const canvas = $("board");
   const ctx = canvas.getContext("2d");
   const preview = $("next-row");
   const previewCtx = preview.getContext("2d");
+  const background = document.createElement("canvas");
+  const spoolArt = new Map();
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   let cell = 28;
   let rowHeight = 28;
@@ -141,6 +163,8 @@ if (typeof document !== "undefined") (() => {
   let pointer = null;
   let selectedId = null;
   let dirty = true;
+  let frameRequest = null;
+  let pausedAt = null;
   let best = 0;
   let modal = null;
   try { best = Math.max(0, Number(localStorage.getItem("meow-match-best")) || 0); } catch (_) { /* File/private mode may deny storage. */ }
@@ -148,7 +172,7 @@ if (typeof document !== "undefined") (() => {
     animate: animate,
     onChange: updateUI,
     onClear: ({ rows, chain, points }) => {
-      popup = { row: Math.min(...rows), rowCount: rows.length, chain, points, start: performance.now() };
+      popup = { row: Math.min(...rows), rowCount: rows.length, chain, points, start: animationNow() };
       const clearLabel = rows.length > 1 ? `${rows.length} rows together!` : "A little more room!";
       setStatus(`${clearLabel}${chain > 1 ? ` Chain ${chain} ·` : ""} +${points}`, true);
     }
@@ -159,7 +183,7 @@ if (typeof document !== "undefined") (() => {
     $("game-status").classList.toggle("busy", busy);
   }
   function updateUI() {
-    dirty = true;
+    invalidate();
     $("score").textContent = game.score.toLocaleString();
     $("moves").textContent = game.moves.toLocaleString();
     if (game.score > best) {
@@ -204,14 +228,13 @@ if (typeof document !== "undefined") (() => {
     context.closePath();
   }
 
-  function drawSpool(context, spool, unitX, unitY, selected = false, alpha = 1) {
+  function paintSpool(context, spool, unitX, unitY, selected = false) {
     const x = spool.col * unitX + 1.5;
     const y = spool.row * unitY + 2;
     const w = spool.length * unitX - 3;
     const h = unitY - 4;
     if (w <= 0 || h <= 0) return;
     context.save();
-    context.globalAlpha = alpha;
     // Each spool is drawn as ONE continuous yarn bar, with flanges only at its
     // two ends. Interior stitch lines are texture, never gameplay divisions.
     context.fillStyle = "#59604a22";
@@ -245,6 +268,26 @@ if (typeof document !== "undefined") (() => {
     context.restore();
   }
 
+  function drawSpool(context, spool, unitX, unitY, selected = false, alpha = 1, row = spool.row) {
+    // Yarn stitches are expensive vector paths. Rasterize each appearance once
+    // at the current DPR; animation frames only composite the cached artwork.
+    const key = `${unitX}/${unitY}/${spool.length}/${spool.color}/${selected}`;
+    let art = spoolArt.get(key);
+    if (!art) {
+      art = document.createElement("canvas");
+      art.width = Math.ceil(spool.length * unitX * dpr);
+      art.height = Math.ceil(unitY * dpr);
+      const artCtx = art.getContext("2d");
+      artCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      paintSpool(artCtx, { ...spool, row: 0, col: 0 }, unitX, unitY, selected);
+      spoolArt.set(key, art);
+    }
+    context.save();
+    context.globalAlpha = alpha;
+    context.drawImage(art, spool.col * unitX, row * unitY, art.width / dpr, art.height / dpr);
+    context.restore();
+  }
+
   function drawPaw(context, x, y, size, color, angle = 0) {
     context.save(); context.translate(x, y); context.rotate(angle); context.fillStyle = color;
     context.beginPath(); context.ellipse(0, size * .15, size * .27, size * .23, 0, 0, Math.PI * 2); context.fill();
@@ -253,7 +296,12 @@ if (typeof document !== "undefined") (() => {
     }); context.restore();
   }
 
-  function drawBackground() {
+  function cacheBackground() {
+    // The grid and cat decorations only change when the canvas size changes.
+    background.width = canvas.width;
+    background.height = canvas.height;
+    const ctx = background.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = "#efeee3"; ctx.fillRect(0, 0, cell * COLS, rowHeight * ROWS);
     for (let row = 0; row < ROWS; row += 1) for (let col = 0; col < COLS; col += 1) {
       ctx.fillStyle = (row + col) % 2 ? "#f5f3e94d" : "#ffffff12";
@@ -274,30 +322,26 @@ if (typeof document !== "undefined") (() => {
   }
 
   function render(now) {
-    drawBackground();
-    let spools = game.board.snapshot();
-    let t = 1;
-    if (tween) {
-      t = Math.min(1, (now - tween.start) / tween.duration);
-      const p = tween.kind === "fall" ? t * t : 1 - (1 - t) ** 3;
-      const starts = new Map(tween.before.map((s) => [s.id, s]));
-      spools = tween.after.map((s) => {
-        const start = starts.get(s.id);
-        const fromRow = start ? start.row : ROWS;
-        return { ...s, row: fromRow + (s.row - fromRow) * p };
-      });
-    }
+    ctx.drawImage(background, 0, 0, background.width / dpr, background.height / dpr);
+    // Paths are prepared once per animation, with no snapshots/maps/objects
+    // allocated per spool on every frame. Time comes from RAF, not frame count.
+    const spools = tween ? tween.pieces : game.board.spools.values();
+    const t = tween ? Math.max(0, Math.min(1, (now - tween.start) / tween.duration)) : 1;
+    const riseProgress = 1 - (1 - t) ** 3;
     if (game.drag) {
       const s = game.board.getSpool(game.drag.id);
       const bounds = game.board.dragBounds(s.id);
       ctx.fillStyle = "#7b977a1c";
       ctx.fillRect(bounds.min*cell, s.row*rowHeight, (bounds.max-bounds.min+s.length)*cell, rowHeight);
     }
-    spools.forEach((s) => {
+    for (const s of spools) {
+      let row = s.row;
+      if (tween && tween.kind === "fall") row = sampleFallRow(s.fromRow, s.row, tween.maxDrop, t);
+      else if (tween && tween.kind === "insert") row = s.fromRow + (s.row - s.fromRow) * riseProgress;
       let alpha = 1;
-      if (tween && tween.kind === "clear" && tween.rows.includes(s.row)) alpha = 1 - t * .9;
-      drawSpool(ctx, s, cell, rowHeight, (game.drag && game.drag.id === s.id) || selectedId === s.id, alpha);
-    });
+      if (tween && tween.kind === "clear" && tween.clearRows.has(s.row)) alpha = 1 - t * .9;
+      drawSpool(ctx, s, cell, rowHeight, (game.drag && game.drag.id === s.id) || selectedId === s.id, alpha, row);
+    }
     if (tween && tween.kind === "clear") {
       tween.rows.forEach((row) => { ctx.fillStyle = `rgba(255,250,217,${Math.sin(t*Math.PI)*.8})`; ctx.fillRect(0,row*rowHeight,COLS*cell,rowHeight); });
     }
@@ -338,40 +382,77 @@ if (typeof document !== "undefined") (() => {
   function resize() {
     // CSS owns available space; the backing stores use DPR, keeping hit-testing
     // in CSS pixels even on high-density Android displays and after rotation.
-    // A captured pointer uses the old canvas origin/scale. Cancel its gesture
-    // before a resize can reinterpret an unchanged finger as a horizontal move.
-    if (pointer) finishPointer(null, true);
+    // A captured pointer uses the original cell scale. Cancel its gesture
+    // before a size change can reinterpret the finger's horizontal movement.
     const region = $("board-region");
     // Use the largest shared cell size that fits both axes, preserving square
     // cells on every screen while keeping the whole 9-by-12 board visible.
-    cell = Math.max(1, Math.min(region.clientWidth / COLS, region.clientHeight / ROWS));
+    const nextCell = Math.max(1, Math.min(region.clientWidth / COLS, region.clientHeight / ROWS));
+    const nextDpr = window.devicePixelRatio || 1;
+    const previewWidth = Math.round(preview.clientWidth * nextDpr);
+    const previewHeight = Math.round(preview.clientHeight * nextDpr);
+    // ResizeObserver and window.resize can report the same geometry. Avoid
+    // resetting backing stores/caches or cancelling a drag for those repeats.
+    if (cell === nextCell && dpr === nextDpr &&
+        canvas.width === Math.round(nextCell * COLS * nextDpr) &&
+        canvas.height === Math.round(nextCell * ROWS * nextDpr) &&
+        preview.width === previewWidth && preview.height === previewHeight) return;
+    if (pointer) finishPointer(null, true);
+    cell = nextCell;
     rowHeight = cell;
     const width = cell * COLS, height = rowHeight * ROWS;
-    dpr = window.devicePixelRatio || 1;
+    dpr = nextDpr;
     $("board-wrap").style.width = `${width}px`; $("board-wrap").style.height = `${height}px`;
     canvas.style.width = `${width}px`; canvas.style.height = `${height}px`;
     canvas.width = Math.round(width*dpr); canvas.height = Math.round(height*dpr);
     ctx.setTransform(dpr,0,0,dpr,0,0);
-    preview.width = Math.round(preview.clientWidth*dpr); preview.height = Math.round(preview.clientHeight*dpr);
+    preview.width = previewWidth; preview.height = previewHeight;
     previewCtx.setTransform(dpr,0,0,dpr,0,0);
-    drawPreview(); dirty = true;
+    spoolArt.clear();
+    cacheBackground();
+    drawPreview(); invalidate();
+  }
+  function animationNow() {
+    return document.hidden && pausedAt !== null ? pausedAt : performance.now();
   }
   function animate(frame) {
-    return new Promise((done) => { tween = { ...frame, duration: reducedMotion.matches ? 35 : frame.duration, start: performance.now(), done }; dirty = true; });
+    const starts = new Map(frame.before.map((s) => [s.id, s.row]));
+    const pieces = frame.after.map((s) => ({ ...s, fromRow: starts.has(s.id) ? starts.get(s.id) : ROWS }));
+    return new Promise((done) => {
+      tween = { ...frame, pieces, clearRows: new Set(frame.rows), duration: reducedMotion.matches ? 35 : frame.duration, start: animationNow(), done };
+      invalidate();
+    });
+  }
+  function scheduleFrame() {
+    if (frameRequest === null && !document.hidden) frameRequest = requestAnimationFrame(tick);
+  }
+  function invalidate() {
+    dirty = true;
+    scheduleFrame();
   }
   function tick(now) {
+    frameRequest = null;
+    if (document.hidden) return;
     if (dirty || tween || popup) {
-      render(now); dirty = false;
+      dirty = false;
+      render(now);
       if (tween && now-tween.start >= tween.duration) {
         const done=tween.done; tween=null; dirty=true; done();
       }
     }
-    requestAnimationFrame(tick);
+    // Let the phone rest between moves; pointer events and state changes wake
+    // one frame, while active animations keep requesting the next frame.
+    if (dirty || tween || popup) scheduleFrame();
   }
 
   function localPoint(event) {
     const rect=canvas.getBoundingClientRect();
-    return { x:(event.clientX-rect.left)/rect.width*COLS, y:(event.clientY-rect.top)/rect.height*ROWS };
+    return { x:(event.clientX-rect.left)/rect.width*COLS, y:(event.clientY-rect.top)/rect.height*ROWS, cellWidth:rect.width/COLS };
+  }
+  function dragColumn(event) {
+    // Track finger displacement in screen coordinates. If layout re-centers
+    // an unchanged-size board, a stationary finger must not slide its spool.
+    return pointer.startCol + (event.clientX - pointer.startClientX) / pointer.cellWidth;
   }
   canvas.addEventListener("pointerdown",(event) => {
     if (modal || game.state!==STATES.IDLE || !event.isPrimary || (event.pointerType==="mouse" && event.button!==0)) return;
@@ -380,19 +461,19 @@ if (typeof document !== "undefined") (() => {
     const id=game.board.grid[row][col];
     if (id===null || !game.beginDrag(id)) return;
     event.preventDefault(); selectedId=null;
-    pointer={id:event.pointerId,startX:p.x,startCol:game.drag.startCol};
+    pointer={id:event.pointerId,startClientX:event.clientX,cellWidth:p.cellWidth,startCol:game.drag.startCol};
     canvas.setPointerCapture(event.pointerId);
     canvas.focus({preventScroll:true});
   });
   canvas.addEventListener("pointermove",(event) => {
     if (!pointer || event.pointerId!==pointer.id) return;
     event.preventDefault();
-    game.moveDrag(pointer.startCol+localPoint(event).x-pointer.startX);
+    game.moveDrag(dragColumn(event));
   });
   function finishPointer(event,cancelled=false) {
     if (!pointer || (event && event.pointerId!==pointer.id)) return;
     const id=pointer.id;
-    if (!cancelled && event) game.moveDrag(pointer.startCol+localPoint(event).x-pointer.startX);
+    if (!cancelled && event) game.moveDrag(dragColumn(event));
     pointer=null;
     if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
     if (cancelled) game.cancelDrag();
@@ -403,20 +484,38 @@ if (typeof document !== "undefined") (() => {
   canvas.addEventListener("lostpointercapture",(event)=>finishPointer(event,true));
   canvas.addEventListener("contextmenu",(event)=>event.preventDefault());
   window.addEventListener("blur",()=>{ finishPointer(null,true); if(game.state===STATES.DRAGGING) game.cancelDrag(); });
-  document.addEventListener("visibilitychange",()=>{ if(document.hidden){ finishPointer(null,true); if(game.state===STATES.DRAGGING) game.cancelDrag(); } });
+  document.addEventListener("visibilitychange",()=>{
+    if (document.hidden) {
+      pausedAt = performance.now();
+      if (frameRequest !== null) cancelAnimationFrame(frameRequest);
+      frameRequest = null;
+      finishPointer(null, true);
+      if (game.state === STATES.DRAGGING) game.cancelDrag();
+    } else {
+      // Background tabs throttle RAF. Exclude hidden time so returning to the
+      // game resumes the drop in place rather than jumping to its last frame.
+      if (pausedAt !== null) {
+        const elapsed = performance.now() - pausedAt;
+        if (tween) tween.start += elapsed;
+        if (popup) popup.start += elapsed;
+        pausedAt = null;
+      }
+      invalidate();
+    }
+  });
 
   canvas.addEventListener("keydown",(event)=>{
     if(modal || pointer || ![STATES.IDLE,STATES.DRAGGING].includes(game.state)) return;
     const keys=["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Enter"," ","Escape"];
     if(!keys.includes(event.key))return;
     event.preventDefault();
-    if(event.key==="Escape"){game.cancelDrag();selectedId=null;dirty=true;return;}
+    if(event.key==="Escape"){game.cancelDrag();selectedId=null;invalidate();return;}
     const list=game.board.snapshot().sort((a,b)=>b.row-a.row || a.col-b.col);
     if(!list.length)return;
     if(event.key==="ArrowUp" || event.key==="ArrowDown"){
       if(game.state===STATES.DRAGGING)return;
       const index=list.findIndex(s=>s.id===selectedId);
-      selectedId=list[(index+(event.key==="ArrowUp"?1:-1)+list.length)%list.length].id;dirty=true;
+      selectedId=list[(index+(event.key==="ArrowUp"?1:-1)+list.length)%list.length].id;invalidate();
     }else if(event.key==="Enter" || event.key===" "){
       if(game.state===STATES.DRAGGING){selectedId=null;void game.releaseDrag();}
       else {selectedId=selectedId || list[0].id;game.beginDrag(selectedId);}
@@ -444,7 +543,7 @@ if (typeof document !== "undefined") (() => {
   document.querySelector(".brand").addEventListener("click",(event)=>event.preventDefault());
   new ResizeObserver(resize).observe($("board-region"));
   window.addEventListener("resize",resize);
-  game.reset(); resize(); requestAnimationFrame(tick);
+  game.reset(); resize();
 
   // file:// needs no worker. On secure static hosting the optional worker
   // precaches only this folder's files; gameplay never makes network requests.

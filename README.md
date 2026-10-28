@@ -21,6 +21,7 @@ meow-match/
 ├── tests/
 │   ├── engine.test.cjs     # Rules, fixtures, and randomized invariant tests
 │   ├── controller.test.cjs # Turn orchestration and scoring tests
+│   ├── motion.test.cjs     # Continuous drop paths and collision invariants
 │   └── browser-input.test.cjs # Pointer/resize regressions with a mocked DOM
 ├── README.md
 └── LICENSE
@@ -83,12 +84,22 @@ The choices above resolve small ambiguities: a committed drag, clearing, and ins
 
 `engine.js` is independent of the DOM and rendering. It exposes `MeowEngine` in the browser and the same API through CommonJS for testing. `Board` starts empty; `reset()` creates an initial game. The grid is authoritative for occupancy, collisions, full rows, and support. `assertValid()` checks the spool-to-cell mapping. The controller separates idle input, dragging, resolution, insertion, and game over. Rendering uses `requestAnimationFrame` and short interpolated animations.
 
+### Falling and rendering
+
+Each gravity phase computes its final rigid-body positions using the grid, then animates **one continuous drop**. All spools share the same accelerating travel distance and stop at their individual landing rows. This preserves vertical ordering and prevents overlap, including stacks and partial overhangs. Acceleration never restarts at a cell boundary. The phase takes 150–300 ms depending on its longest drop; a six-cell drop takes about 220 ms instead of six separate 150 ms steps. Full-row scanning still waits for the entire fall animation, and insertion still waits for all clears and chains.
+
+The grid background and yarn textures are drawn into local canvas caches at the current device pixel ratio. They are reused during motion and rebuilt when the canvas geometry or pixel ratio changes. Animation paths are prepared once per phase rather than allocating fresh board snapshots and lookup maps every frame. Repeated resize events with unchanged dimensions and pointer moves within the same column do not trigger extra updates.
+
+Rendering runs only while something changes; there is no idle animation-frame loop. Switching away from the tab pauses the animation clock, so returning resumes the fall instead of skipping to its last frame. Timing uses elapsed time rather than frame counts, and reduced-motion mode shortens each animation to 35 ms without changing the rules.
+
 The game needs no Node.js installation. Developers who have Node.js can run the automated tests from the repository directory:
 
 ```sh
-node --test tests/engine.test.cjs tests/controller.test.cjs tests/browser-input.test.cjs
+node --test tests/engine.test.cjs tests/controller.test.cjs tests/motion.test.cjs tests/browser-input.test.cjs
 ```
 
-Tests cover geometry, contiguous drag limits, single-cell and stacked rigid gravity, partial support, color-independent full rows, chains, insertion, overflow, no-op behavior, scoring, and randomized invariant checks. Input tests load the real scripts in a mocked DOM to check touch and mouse handling, cancellation, and resizing during a drag. For a manual mobile check, drag with one finger, verify input stays locked during animations, resize/rotate the phone, and reopen the cached app in airplane mode.
+Tests cover geometry, contiguous drag limits, single-cell and stacked rigid gravity, partial support, color-independent full rows, chains, insertion, overflow, no-op behavior, scoring, and randomized invariant checks. Motion tests sample falling paths between cells to verify continuous travel and prevent visual overlaps. Browser tests run the real scripts in a mocked DOM/Canvas with a controlled animation clock to check frame cadence, caching, tab visibility, reduced motion, touch and mouse handling, and resizing. These are correctness and rendering-work checks, not measurements of Android GPU performance.
+
+For a manual phone check, create a long drop and a chain clear, verify input stays locked until the board settles, switch away and return during a fall, rotate the phone, and reopen the cached app in airplane mode. Device frame-rate profiling should be done on the target Android phone; desktop or simulated frame timing cannot establish its actual FPS.
 
 When changing cached app files for a new release, increment the cache version in `service-worker.js` so the next service-worker installation prepares a fresh complete local cache.
