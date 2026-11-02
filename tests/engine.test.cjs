@@ -68,6 +68,8 @@ function resolveRows(board) {
 
 function checkNewRow(specs) {
   assert.ok(specs.length >= 2, 'a new row contains several independent spools');
+  assert.ok(specs.length <= 3, 'new rows use a few substantial spools');
+  assert.ok(specs.filter(spec => spec.length === 1).length <= 1, 'a new row has at most one singleton');
   const cells = new Array(9).fill(false);
   let occupied = 0;
   for (const spec of specs) {
@@ -79,7 +81,7 @@ function checkNewRow(specs) {
       occupied += 1;
     }
   }
-  assert.ok(occupied > 0 && occupied <= 8);
+  assert.ok(occupied >= 4 && occupied <= 8);
   assert.ok(cells.includes(false));
 }
 
@@ -101,6 +103,8 @@ test('new games and restarts contain exactly three sparse, stable rows and allow
       board.reset();
       checkBoard(board);
       assert.ok(board.spools.size >= 2);
+      assert.ok(board.snapshot().filter(spool => spool.length === 5).length <= 1,
+        `opening board permits at most one length-five spool: seed ${seed}, restart ${restart}`);
       const occupiedRows = board.grid.flatMap((cells, row) => cells.some(id => id !== null) ? [row] : []);
       assert.deepEqual(occupiedRows, [ROWS - 3, ROWS - 2, ROWS - 1], `seed ${seed}, restart ${restart}`);
       assert.ok(board.grid.slice(0, ROWS - 3).every(row => row.every(id => id === null)));
@@ -265,6 +269,143 @@ test('generated bottom rows contain several valid spools and at least one gap', 
     for (const spec of specs) lengths.add(spec.length);
   }
   assert.deepEqual([...lengths].sort(), [1, 2, 3, 4, 5]);
+});
+
+test('an existing length-five spool anywhere on the board excludes new fives without excluding lengths one to four', () => {
+  for (const row of [0, Math.floor(ROWS / 2), ROWS - 1]) {
+    const board = new Board({ random: seededRandom(4273) });
+    // A smaller spool appears first in metadata order: eligibility must inspect
+    // all live pieces, including a five high above the incoming bottom row.
+    add(board, ROWS - 2, 0, 2);
+    const five = add(board, row, 3, 5, '#102030');
+    const before = board.snapshot();
+    const beforeGrid = board.grid.map(cells => cells.slice());
+    const nextId = board.nextId;
+    const lengths = new Set();
+    for (let sample = 0; sample < 2000; sample += 1) {
+      const specs = board.makeRow();
+      checkNewRow(specs);
+      for (const spec of specs) {
+        assert.ok(spec.length <= 4, `existing five on row ${row} must prevent a new five`);
+        lengths.add(spec.length);
+      }
+    }
+    assert.deepEqual([...lengths].sort(), [1, 2, 3, 4]);
+    assert.deepEqual(board.snapshot(), before, 'generation cannot shorten, recolor, or move existing pieces');
+    assert.deepEqual(board.grid, beforeGrid);
+    assert.equal(board.getSpool(five.id), five, 'the existing five remains the same independent spool');
+    assert.equal(board.nextId, nextId);
+    checkBoard(board);
+  }
+});
+
+test('length five becomes eligible only after the last existing five clears', () => {
+  const board = new Board({ random: seededRandom(7901) });
+  const survivor = add(board, ROWS - 3, 2, 2);
+  const fives = [];
+  for (const row of [ROWS - 2, ROWS - 1]) {
+    fives.push(add(board, row, 0, 5));
+    add(board, row, 5, 4);
+  }
+
+  // Fixtures can contain multiple old fives. Clearing just one must not enable
+  // another; the policy is based on current board contents, not a toggle.
+  board.clearRows([ROWS - 1]);
+  assert.equal(board.getSpool(fives[1].id), null);
+  assert.equal(board.getSpool(fives[0].id).length, 5);
+  for (let sample = 0; sample < 300; sample += 1) {
+    const specs = board.makeRow();
+    checkNewRow(specs);
+    assert.ok(specs.every(spec => spec.length <= 4));
+  }
+
+  board.clearRows([ROWS - 2]);
+  assert.equal(board.getSpool(fives[0].id), null);
+  assert.deepEqual(board.snapshot(), [{ ...survivor }]);
+  const lengths = new Set();
+  for (let sample = 0; sample < 2000; sample += 1) {
+    const specs = board.makeRow();
+    checkNewRow(specs);
+    for (const spec of specs) lengths.add(spec.length);
+  }
+  assert.deepEqual([...lengths].sort(), [1, 2, 3, 4, 5], 'clearing the last five restores every legal length');
+  assert.deepEqual(board.snapshot(), [{ ...survivor }]);
+  checkBoard(board);
+});
+
+test('long-run generation favors lengths two to four and keeps singletons occasional', () => {
+  const board = new Board({ random: seededRandom(918273) });
+  const samples = 10000;
+  const counts = new Array(6).fill(0);
+  const columns = new Array(COLS).fill(0);
+  const layouts = new Set();
+  let occupied = 0;
+  for (let i = 0; i < samples; i += 1) {
+    const specs = board.makeRow();
+    checkNewRow(specs);
+    layouts.add(JSON.stringify(specs.map(({ col, length }) => [col, length])));
+    for (const spec of specs) {
+      counts[spec.length] += 1;
+      occupied += spec.length;
+      for (let col = spec.col; col < spec.col + spec.length; col += 1) columns[col] += 1;
+    }
+  }
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  const singleShare = counts[1] / total;
+  assert.ok(singleShare >= 0.10 && singleShare < 0.20, `singleton share was ${singleShare}`);
+  assert.ok((counts[2] + counts[3] + counts[4]) / total > 0.70, 'medium spools should dominate');
+  assert.ok(counts[5] / total > 0.02 && counts[5] / total < 0.12, 'length five stays an occasional option');
+  assert.ok(occupied / samples > 5.8 && occupied / samples < 6.2, 'changing lengths must not increase row density');
+  assert.ok(layouts.size > 500, 'the reduction must preserve varied horizontal layouts');
+  for (let col = 0; col < COLS; col += 1) {
+    assert.ok(columns[col] > samples * 0.4 && columns[col] < samples * 0.85, `column ${col} needs varied occupancy`);
+    assert.ok(Math.abs(columns[col] - columns[COLS - 1 - col]) < samples * 0.03,
+      `horizontal generation should not favor one side: column ${col}`);
+  }
+});
+
+test('row generation preserves every protected gap and opening support with or without an existing five', () => {
+  for (let gap = 0; gap < COLS; gap += 1) {
+    const supports = [null, ...Array.from({ length: COLS }, (_, col) => col).filter(col => col !== gap)];
+    for (const support of supports) {
+      for (const hasFive of [false, true]) {
+        const randomSources = [seededRandom(7300 + gap * 101 + (support === null ? 0 : support + 1)), () => 0, () => 1 - Number.EPSILON];
+        for (const random of randomSources) {
+          const board = new Board({ random });
+          if (hasFive) add(board, ROWS - 1, 1, 5);
+          const before = board.snapshot();
+          for (let sample = 0; sample < 10; sample += 1) {
+            const specs = board._makeRow(gap, support);
+            checkNewRow(specs);
+            if (hasFive) assert.ok(specs.every(spec => spec.length <= 4));
+            const covers = col => specs.some(spec => spec.col <= col && col < spec.col + spec.length);
+            assert.equal(covers(gap), false, `gap ${gap} must remain empty`);
+            if (support !== null) assert.equal(covers(support), true, `support ${support} beside gap ${gap}`);
+          }
+          assert.deepEqual(board.snapshot(), before);
+          checkBoard(board);
+        }
+      }
+    }
+  }
+});
+
+test('future row generation preserves existing spool shapes and returns independent specifications', () => {
+  const board = new Board({ random: () => 0 });
+  add(board, ROWS - 1, 2, 4);
+  const before = board.snapshot();
+  const nextId = board.nextId;
+  const first = board.makeRow();
+  const expected = first.map(spec => ({ ...spec }));
+  first[0].col = 99;
+  first[0].length = 99;
+  first[0].color = '#000000';
+  for (let i = 0; i < 20; i += 1) {
+    assert.deepEqual(board.makeRow(), expected, 'a returned row cannot mutate cached creation layouts');
+    assert.deepEqual(board.snapshot(), before, 'existing spools are never resized or merged');
+    assert.equal(board.nextId, nextId, 'preview generation does not insert spools');
+  }
+  checkBoard(board);
 });
 
 test('insertion moves each existing spool up exactly once and adds only the supplied row', () => {

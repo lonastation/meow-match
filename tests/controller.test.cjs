@@ -233,11 +233,19 @@ test('a whole-board scan clears nonadjacent full rows in one animation and one m
     if (step.finished) { assert.equal(step.result, true); break; }
     assert.ok(++steps < 100);
     if (step.frame.kind === 'clear') {
+      assert.equal(step.frame.duration, 900);
+      assert.equal(step.frame.holdDuration, 450);
+      assert.deepEqual(step.frame.before, step.frame.after, 'clearing never moves the board during its reaction pause');
       assert.deepEqual(step.frame.rows, fullRows);
       assert.deepEqual(scan(), fullRows);
       assert.ok([...clearedIds].every(id => board.getSpool(id)));
       assert.deepEqual(batches, []);
       assert.equal(game.score, 0);
+      const pausedBoard = board.snapshot();
+      await Promise.resolve();
+      assert.deepEqual(board.snapshot(), pausedBoard);
+      assert.equal(frames.at(-1), step.frame, 'no gravity or insertion may overtake the pending clear');
+      assert.equal(game.reset(), false);
     }
     step.finish();
   }
@@ -454,7 +462,14 @@ test('every animation phase locks dragging, cancellation, reset, and duplicate r
     const { frame, done } = step;
     kinds.add(frame.kind);
     assert.equal(game.state, frame.kind === 'insert' ? STATES.INSERTING_ROW : STATES.RESOLVING);
-    assert.ok(frame.duration >= 150 && frame.duration <= 300);
+    if (frame.kind === 'fall') {
+      assert.ok(frame.duration >= 360 && frame.duration <= Math.round(260 * Math.sqrt(ROWS - 1)));
+    } else if (frame.kind === 'clear') {
+      assert.equal(frame.duration, 900);
+      assert.equal(frame.holdDuration, 450);
+    } else {
+      assert.equal(frame.duration, 420);
+    }
     const before = board.snapshot();
     const score = game.score;
     const moves = game.moves;
@@ -532,4 +547,60 @@ test('drag acquisition and reset obey the idle and game-over boundaries', () => 
   assert.equal(game.reset(), true);
   assert.equal(game.state, STATES.IDLE);
   board.assertValid();
+});
+
+test('long spools cannot accumulate across real turns, resets, and queued previews', async () => {
+  let turns = 0;
+  let insertedLongs = 0;
+  let clearedLongs = 0;
+  const countLongs = spools => spools.filter(spool => spool.length === 5).length;
+  for (let seed = 1; seed <= 100; seed += 1) {
+    let state = seed;
+    const random = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+    const board = new Board({ random });
+    let incoming = null;
+    const game = new Game({
+      board,
+      onChange: current => {
+        if (current.state === STATES.IDLE || current.state === STATES.DRAGGING) {
+          assert.ok(countLongs(board.snapshot()) + countLongs(current.nextRow) <= 1,
+            'the visible board and advertised next row share one long-spool allowance');
+        }
+      },
+      onClear: ({ rows }) => {
+        clearedLongs += countLongs(board.snapshot().filter(spool => rows.includes(spool.row)));
+      },
+      animate: async frame => {
+        assert.ok(countLongs(frame.before) <= 1);
+        assert.ok(countLongs(frame.after) <= 1);
+        assert.equal(game.nextRow, incoming, 'a committed preview stays fixed throughout resolution');
+        if (frame.kind === 'insert') {
+          const oldIds = new Set(frame.before.map(spool => spool.id));
+          const inserted = frame.after.filter(spool => !oldIds.has(spool.id));
+          assert.deepEqual(inserted.map(({ col, length, color }) => ({ col, length, color })), incoming);
+          insertedLongs += countLongs(inserted);
+        }
+      },
+    });
+    assert.equal(game.reset(), true);
+    for (let move = 0; move < 60 && game.state === STATES.IDLE; move += 1) {
+      const choices = board.snapshot().flatMap(spool => {
+        const bounds = board.dragBounds(spool.id);
+        return [bounds.min, bounds.max].filter(col => col !== spool.col).map(col => ({ id: spool.id, col }));
+      });
+      if (!choices.length) break;
+      const selected = choices[Math.floor(random() * choices.length)];
+      incoming = game.nextRow;
+      assert.equal(await turn(game, selected.id, selected.col), true);
+      board.assertValid();
+      turns += 1;
+    }
+    assert.equal(game.reset(), true, 'restarting must apply the same allowance');
+  }
+  assert.ok(turns > 1000, `exercised ${turns} complete turns`);
+  assert.ok(insertedLongs > 0, 'length five remains a playable incoming piece');
+  assert.ok(clearedLongs > 0, 'the run includes long-spool clearance and renewed eligibility');
 });

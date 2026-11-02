@@ -31,7 +31,7 @@ test('a complete gravity phase aggregates long and short rigid drops into one bo
   assert.ok(frame.moved.some(move => move.toRow - move.fromRow > 1));
   assert.ok(new Set(frame.moved.map(move => move.toRow - move.fromRow)).size > 1);
   assert.equal(frame.maxDrop, Math.max(...frame.moved.map(move => move.toRow - move.fromRow)));
-  assert.ok(frame.duration >= 150 && frame.duration <= 300);
+  assert.ok(frame.duration >= 360 && frame.duration <= Math.round(260 * Math.sqrt(ROWS - 1)));
   for (const move of frame.moved) {
     assert.equal(before.find(spool => spool.id === move.id).row, move.fromRow);
     assert.equal(board.getSpool(move.id).row, move.toRow);
@@ -39,6 +39,13 @@ test('a complete gravity phase aggregates long and short rigid drops into one bo
   board.assertValid();
   await game.fall();
   assert.equal(frames.length, 1, 'an already-settled board does not animate again');
+
+  const shortBoard = new Board();
+  shortBoard.addSpool({ row: ROWS - 2, col: 0, length: 1, color: '#a8caa5' });
+  let shortFall;
+  await new Game({ board: shortBoard, animate: async value => { shortFall = value; } }).fall();
+  assert.equal(shortFall.duration, 360, 'even a one-cell drop leaves time to follow the motion');
+  assert.ok(frame.duration > shortFall.duration, 'longer drops receive more viewing time');
 });
 
 test('sampled continuous paths preserve shape, order, bounds, and non-overlap through unequal drops', async () => {

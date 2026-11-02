@@ -10,6 +10,42 @@
   const COLS = 9;
   const ROWS = 12;
   const COLORS = Object.freeze(["#f59ba7", "#f4c776", "#a8caa5", "#a6c8df", "#c5b1e0"]);
+  const ROW_LAYOUT_CACHE = new Map();
+
+  function rowLayouts(occupied, gap) {
+    const key = occupied + ":" + gap;
+    if (ROW_LAYOUT_CACHE.has(key)) return ROW_LAYOUT_CACHE.get(key);
+    const layouts = [];
+
+    // Enumerate only fresh two- or three-spool layouts. Depth is at most three
+    // on a nine-cell row: generation is bounded and never relies on retries.
+    function place(nextCol, remaining, pieces, mask, singles) {
+      if (remaining === 0) {
+        if (pieces.length >= 2) {
+          layouts.push({
+            pieces: pieces.slice(), mask, singles,
+            weight: pieces.some((piece) => piece.length === 5) ? 1 : 3
+          });
+        }
+        return;
+      }
+      if (pieces.length === 3) return;
+      for (let col = nextCol; col < COLS; col += 1) {
+        for (let length = 1; length <= Math.min(5, remaining, COLS - col); length += 1) {
+          if (col <= gap && col + length > gap) continue;
+          if (length === 1 && singles === 1) continue;
+          pieces.push({ col, length });
+          const cells = ((1 << length) - 1) << col;
+          place(col + length, remaining - length, pieces, mask | cells, singles + (length === 1 ? 1 : 0));
+          pieces.pop();
+        }
+      }
+    }
+
+    place(0, occupied, [], 0, 0);
+    ROW_LAYOUT_CACHE.set(key, layouts);
+    return layouts;
+  }
 
   function emptyGrid() {
     return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
@@ -193,35 +229,37 @@
 
     _makeRow(gap, support = null) {
       const occupied = 4 + this._int(5);
-      const choices = Array.from({ length: COLS }, (_, col) => col).filter((col) => col !== gap);
-      for (let i = choices.length - 1; i > 0; i -= 1) {
-        const j = this._int(i + 1);
-        [choices[i], choices[j]] = [choices[j], choices[i]];
-      }
-      const selected = choices.slice(0, occupied);
-      if (support !== null && !selected.includes(support)) selected[selected.length - 1] = support;
-      const filled = new Set(selected);
-      const specs = [];
-      for (let col = 0; col < COLS;) {
-        if (!filled.has(col)) {
-          col += 1;
-          continue;
+      // Long spools tend to linger: wait until every existing length-five spool
+      // clears before allowing another. Never resize or remove existing yarn.
+      const hasLongSpool = Array.from(this.spools.values()).some((spool) => spool.length === 5);
+      let candidates = rowLayouts(occupied, gap).filter((layout) =>
+        (support === null || (layout.mask & (1 << support)) !== 0) &&
+        (!hasLongSpool || layout.pieces.every((piece) => piece.length !== 5)));
+
+      // Choose whole spool layouts rather than scattering individual cells,
+      // which made single-cell fragments dominate. About one third of rows
+      // request one singleton; most spools consequently have lengths 2–4.
+      const wantSingleton = this._int(100) < 35;
+      const matchingSingles = candidates.filter((layout) => (layout.singles === 1) === wantSingleton);
+      if (matchingSingles.length) candidates = matchingSingles;
+
+      // Prefer two spools, with occasional three-spool rows. A protected gap or
+      // opening support can constrain the options; use the remaining valid set.
+      const pieceCount = this._int(4) === 0 ? 3 : 2;
+      const matchingCount = candidates.filter((layout) => layout.pieces.length === pieceCount);
+      if (matchingCount.length) candidates = matchingCount;
+
+      let ticket = this._int(candidates.reduce((sum, layout) => sum + layout.weight, 0));
+      let chosen = candidates[0];
+      for (const layout of candidates) {
+        if (ticket < layout.weight) {
+          chosen = layout;
+          break;
         }
-        let run = 0;
-        while (col + run < COLS && filled.has(col + run)) run += 1;
-        const length = 1 + this._int(Math.min(5, run));
-        specs.push({ col, length, color: this._color() });
-        col += length;
+        ticket -= layout.weight;
       }
-      // A contiguous four- or five-cell run may have become one piece. Split it
-      // during creation so every incoming row contains at least two new spools.
-      if (specs.length === 1) {
-        const first = specs[0];
-        const tailLength = first.length - 1;
-        first.length = 1;
-        specs.push({ col: first.col + 1, length: tailLength, color: this._color() });
-      }
-      return specs;
+      // Return fresh specs: cached layouts and every existing spool are intact.
+      return chosen.pieces.map((piece) => ({ ...piece, color: this._color() }));
     }
 
     makeRow() {

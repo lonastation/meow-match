@@ -9,6 +9,7 @@
   "use strict";
   const { Board } = engine;
   const STATES = Object.freeze({ IDLE: "IDLE", DRAGGING: "DRAGGING", RESOLVING: "RESOLVING", INSERTING_ROW: "INSERTING_ROW", GAME_OVER: "GAME_OVER" });
+  const TIMING = Object.freeze({ fallMin: 360, fallPerSqrtCell: 260, clearHold: 450, clearFade: 450, insert: 420 });
 
   function sampleFallRow(fromRow, toRow, maxDrop, progress) {
     const t = Math.max(0, Math.min(1, progress));
@@ -81,7 +82,8 @@
         }
       }
       if (!moved.length) return;
-      const duration = Math.max(150, Math.min(300, 90 * Math.sqrt(maxDrop)));
+      // Keep a continuous drop, but give the eye time to follow its travel.
+      const duration = Math.max(TIMING.fallMin, Math.round(TIMING.fallPerSqrtCell * Math.sqrt(maxDrop)));
       await this.animate({ kind: "fall", before, after, moved, maxDrop, duration });
     }
     async resolve() {
@@ -98,7 +100,10 @@
         const points = rows.length * (100 + 50 * (chain - 1));
         const before = this.board.snapshot();
         this.onClear({ rows, chain, points });
-        await this.animate({ kind: "clear", before, after: before, rows, chain, points, duration: 240 });
+        // Hold the full batch in place, then fade it. No grid mutation,
+        // scoring, gravity, or insertion may advance during this reading pause.
+        await this.animate({ kind: "clear", before, after: before, rows, chain, points,
+          holdDuration: TIMING.clearHold, duration: TIMING.clearHold + TIMING.clearFade });
         this.board.clearRows(rows);
         this.score += points;
         this.notify();
@@ -128,7 +133,7 @@
       this.setState(STATES.INSERTING_ROW);
       const before = this.board.snapshot();
       this.board.insertRow(this.nextRow);
-      await this.animate({ kind: "insert", before, after: this.board.snapshot(), duration: 240 });
+      await this.animate({ kind: "insert", before, after: this.board.snapshot(), duration: TIMING.insert });
       this.setState(STATES.RESOLVING);
       // Insertion starts a separate resolution, so its first clear scores 100.
       await this.resolve();
@@ -139,14 +144,14 @@
       return true;
     }
   }
-  return Object.freeze({ Game, STATES, sampleFallRow });
+  return Object.freeze({ Game, STATES, TIMING, sampleFallRow });
 });
 
 /* Browser view: the grid is never inferred from drawn pixels or tween positions. */
 if (typeof document !== "undefined") (() => {
   "use strict";
   const { COLS, ROWS } = MeowEngine;
-  const { Game, STATES, sampleFallRow } = MeowGame;
+  const { Game, STATES, TIMING, sampleFallRow } = MeowGame;
   const $ = (id) => document.getElementById(id);
   const canvas = $("board");
   const ctx = canvas.getContext("2d");
@@ -172,7 +177,7 @@ if (typeof document !== "undefined") (() => {
     animate: animate,
     onChange: updateUI,
     onClear: ({ rows, chain, points }) => {
-      popup = { row: Math.min(...rows), rowCount: rows.length, chain, points, start: animationNow() };
+      popup = { row: Math.min(...rows), rowCount: rows.length, chain, points, start: animationNow(), duration: TIMING.clearHold + TIMING.clearFade };
       const clearLabel = rows.length > 1 ? `${rows.length} rows together!` : "A little more room!";
       setStatus(`${clearLabel}${chain > 1 ? ` Chain ${chain} ·` : ""} +${points}`, true);
     }
@@ -328,6 +333,8 @@ if (typeof document !== "undefined") (() => {
     const spools = tween ? tween.pieces : game.board.spools.values();
     const t = tween ? Math.max(0, Math.min(1, (now - tween.start) / tween.duration)) : 1;
     const riseProgress = 1 - (1 - t) ** 3;
+    const clearFade = tween && tween.kind === "clear"
+      ? Math.max(0, Math.min(1, (now - tween.start - tween.holdDuration) / (tween.duration - tween.holdDuration))) : 0;
     if (game.drag) {
       const s = game.board.getSpool(game.drag.id);
       const bounds = game.board.dragBounds(s.id);
@@ -339,23 +346,25 @@ if (typeof document !== "undefined") (() => {
       if (tween && tween.kind === "fall") row = sampleFallRow(s.fromRow, s.row, tween.maxDrop, t);
       else if (tween && tween.kind === "insert") row = s.fromRow + (s.row - s.fromRow) * riseProgress;
       let alpha = 1;
-      if (tween && tween.kind === "clear" && tween.clearRows.has(s.row)) alpha = 1 - t * .9;
+      if (tween && tween.kind === "clear" && tween.clearRows.has(s.row)) alpha = 1 - clearFade;
       drawSpool(ctx, s, cell, rowHeight, (game.drag && game.drag.id === s.id) || selectedId === s.id, alpha, row);
     }
     if (tween && tween.kind === "clear") {
-      tween.rows.forEach((row) => { ctx.fillStyle = `rgba(255,250,217,${Math.sin(t*Math.PI)*.8})`; ctx.fillRect(0,row*rowHeight,COLS*cell,rowHeight); });
+      // A quiet, steady highlight replaces the bright pulse. Positions stay
+      // fixed through the hold and fade, including every unaffected spool.
+      tween.rows.forEach((row) => { ctx.fillStyle = `rgba(255,250,217,${.18 * (1 - clearFade)})`; ctx.fillRect(0,row*rowHeight,COLS*cell,rowHeight); });
     }
     if (game.drag) {
       const s = game.board.getSpool(game.drag.id);
       drawPaw(ctx, (s.col+s.length/2)*cell, (s.row+.48)*rowHeight, Math.min(22,cell*.8), "#456047d9", -.15);
     }
     if (popup) {
-      const progress = (now - popup.start) / 950;
+      const progress = (now - popup.start) / popup.duration;
       if (progress >= 1) popup = null;
       else {
         const width = Math.min(cell*7, 205), height = 32;
-        const y = Math.max(12, Math.min((popup.row-.8)*rowHeight, ROWS*rowHeight-48)) - progress*rowHeight*.55;
-        ctx.save(); ctx.globalAlpha = Math.min(1, (1-progress)*3);
+        const y = Math.max(12, Math.min((popup.row-.8)*rowHeight, ROWS*rowHeight-48));
+        ctx.save(); ctx.globalAlpha = Math.min(1, (1-progress)*2);
         ctx.fillStyle = "#fcfbf3f2"; rounded(ctx,(COLS*cell-width)/2,y,width,height,16); ctx.fill();
         ctx.strokeStyle="#80957744"; ctx.lineWidth=1; ctx.stroke();
         drawPaw(ctx, COLS*cell/2-width/2+19,y+17,16,"#b98a59");
@@ -419,7 +428,9 @@ if (typeof document !== "undefined") (() => {
     const starts = new Map(frame.before.map((s) => [s.id, s.row]));
     const pieces = frame.after.map((s) => ({ ...s, fromRow: starts.has(s.id) ? starts.get(s.id) : ROWS }));
     return new Promise((done) => {
-      tween = { ...frame, pieces, clearRows: new Set(frame.rows), duration: reducedMotion.matches ? 35 : frame.duration, start: animationNow(), done };
+      // Reduced motion shortens spatial movement, not the clear's reading time.
+      const duration = reducedMotion.matches && frame.kind !== "clear" ? 35 : frame.duration;
+      tween = { ...frame, pieces, clearRows: new Set(frame.rows), duration, start: animationNow(), done };
       invalidate();
     });
   }

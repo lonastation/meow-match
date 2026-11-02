@@ -33,7 +33,8 @@ function eventTarget() {
 function browserHarness({ reducedMotion = false } = {}) {
   const nodes = new Map();
   const scheduledFrames = new Map();
-  const metrics = { canvasCreations: 0, offscreenPaints: 0, boardPaints: 0, drawImages: [] };
+  const metrics = { canvasCreations: 0, offscreenPaints: 0, boardPaints: 0, drawImages: [], fills: [], texts: [] };
+  const animations = [];
   const boardOrigin = { left: 0, top: 0 };
   let nextFrameId = 1;
   let now = 0;
@@ -41,12 +42,17 @@ function browserHarness({ reducedMotion = false } = {}) {
   let publishedGameAPI;
 
   function makeContext(owner) {
-    return new Proxy({}, {
+    const savedStates = [];
+    return new Proxy({ globalAlpha: 1 }, {
       get(target, property) {
         if (!(property in target)) target[property] = (...args) => {
           if (owner.id.startsWith('offscreen-')) metrics.offscreenPaints += 1;
           if (owner.id === 'board') metrics.boardPaints += 1;
-          if (property === 'drawImage') metrics.drawImages.push({ owner: owner.id, args, now });
+          if (property === 'save') savedStates.push({ globalAlpha: target.globalAlpha, fillStyle: target.fillStyle });
+          if (property === 'restore') Object.assign(target, savedStates.pop() || {});
+          if (property === 'drawImage') metrics.drawImages.push({ owner: owner.id, args, now, alpha: target.globalAlpha });
+          if (property === 'fillRect') metrics.fills.push({ owner: owner.id, args, now, alpha: target.globalAlpha, color: target.fillStyle });
+          if (property === 'fillText') metrics.texts.push({ owner: owner.id, args, now, alpha: target.globalAlpha });
         };
         return target[property];
       },
@@ -136,7 +142,13 @@ function browserHarness({ reducedMotion = false } = {}) {
         ...api,
         Game: class extends api.Game {
           constructor(options) {
-            super(options);
+            super({
+              ...options,
+              animate: frame => {
+                animations.push({ frame, now });
+                return options.animate(frame);
+              },
+            });
             game = this;
           }
         },
@@ -197,6 +209,7 @@ function browserHarness({ reducedMotion = false } = {}) {
     finishAnimations,
     advance,
     metrics,
+    animations,
     get pendingFrames() { return scheduledFrames.size; },
     setHidden(hidden) {
       document.hidden = hidden;
@@ -519,4 +532,99 @@ test('reduced motion shortens animation without changing the completed move', as
   assert.equal(reduced.game.moves, normal.game.moves);
   assert.equal(reduced.game.score, normal.game.score);
   assert.equal(reduced.pendingFrames, 0);
+});
+
+test('completed rows stay fully visible for 450 ms, then fade in place until 900 ms in both motion modes', async () => {
+  for (const reducedMotion of [false, true]) {
+    const app = browserHarness({ reducedMotion });
+    const board = new app.game.board.constructor();
+    board.addSpool({ row: ROWS - 1, col: 0, length: 4, color: '#a8caa5' });
+    board.addSpool({ row: ROWS - 1, col: 8, length: 1, color: '#a6c8df' });
+    const clearingIds = [
+      board.addSpool({ row: ROWS - 2, col: 0, length: 5, color: '#f59ba7' }).id,
+      board.addSpool({ row: ROWS - 2, col: 5, length: 4, color: '#f4c776' }).id,
+    ];
+    const survivor = board.addSpool({ row: ROWS - 3, col: 0, length: 1, color: '#c5b1e0' });
+    app.game.board = board;
+    app.game.notify();
+    await app.advance(0);
+    app.pointer('pointerdown', 255);
+    app.pointer('pointermove', 225);
+    app.pointer('pointerup', 225);
+    await app.advance(0);
+
+    const frozenBoard = plainSnapshot(app);
+    const incoming = app.game.nextRow;
+    const nextId = board.nextId;
+    assert.equal(app.animations.length, 1);
+    assert.equal(app.animations[0].frame.kind, 'clear');
+    assert.equal(app.animations[0].frame.duration, 900);
+    assert.equal(app.animations[0].frame.holdDuration, 450);
+    let elapsed = 0;
+    let initialPositions;
+    let popupY;
+    let previousFade = 1;
+    let holdHighlight;
+    let previousHighlight;
+
+    for (const interval of [0, 225, 224, 1, 225, 224]) {
+      const imageStart = app.metrics.drawImages.length;
+      const textStart = app.metrics.texts.length;
+      const fillStart = app.metrics.fills.length;
+      await app.advance(interval);
+      elapsed += interval;
+      const images = app.metrics.drawImages.slice(imageStart).filter(call =>
+        call.owner === 'board' && call.args[0].height <= CELL * 2);
+      const positions = images.map(({ args }) => ({ x: args[1], y: args[2], width: args[3], height: args[4] }));
+      assert.equal(images.length, frozenBoard.length);
+      if (!initialPositions) initialPositions = positions;
+      else assert.deepEqual(positions, initialPositions, 'the complete board stays visually static while rows disappear');
+      const clearing = images.filter(call => call.args[2] === (ROWS - 2) * CELL);
+      assert.equal(clearing.length, 2);
+      assert.equal(clearing[0].alpha, clearing[1].alpha, 'the row fades as one simultaneous batch');
+      if (elapsed <= 450) assert.ok(clearing.every(call => call.alpha === 1), 'hold keeps completed rows fully opaque');
+      else {
+        assert.ok(clearing[0].alpha >= 0 && clearing[0].alpha < previousFade, 'the second half softly fades the row');
+        previousFade = clearing[0].alpha;
+      }
+      assert.ok(images.filter(call => call.args[2] !== (ROWS - 2) * CELL).every(call => call.alpha === 1));
+      const popup = app.metrics.texts.slice(textStart).filter(call => call.owner === 'board').at(-1);
+      assert.ok(popup, 'clear feedback remains present during the reaction interval');
+      if (popupY === undefined) popupY = popup.args[2];
+      else assert.equal(popup.args[2], popupY, 'score feedback does not float over the resting board');
+      const rowHighlights = app.metrics.fills.slice(fillStart).filter(call =>
+        call.owner === 'board' && call.args[2] === COLS * CELL && call.args[3] === CELL);
+      assert.equal(rowHighlights.length, 1);
+      const highlight = Number(rowHighlights[0].color.match(/,\s*([\d.]+)\)$/)[1]);
+      if (holdHighlight === undefined) holdHighlight = highlight;
+      if (elapsed <= 450) assert.equal(highlight, holdHighlight, 'the row highlight stays steady during the hold');
+      else assert.ok(highlight >= 0 && highlight < previousHighlight, 'the highlight fades without pulsing');
+      previousHighlight = highlight;
+
+      assert.deepEqual(plainSnapshot(app), frozenBoard);
+      assert.ok(clearingIds.every(id => board.getSpool(id)));
+      assert.equal(board.getSpool(survivor.id).row, ROWS - 3);
+      assert.equal(board.nextId, nextId);
+      assert.equal(app.game.nextRow, incoming);
+      assert.equal(app.game.score, 0);
+      assert.equal(app.game.state, 'RESOLVING');
+      assert.equal(app.game.reset(), false);
+      assert.equal(app.game.beginDrag(survivor.id), false);
+      assert.equal(app.animations.length, 1, 'no gravity or insertion can begin before the clear ends');
+    }
+
+    assert.equal(elapsed, 899);
+    await app.advance(1);
+    assert.ok(clearingIds.every(id => board.getSpool(id) === null));
+    assert.equal(app.game.score, 100);
+    assert.equal(app.animations.length, 2);
+    assert.equal(app.animations[1].frame.kind, 'fall');
+    assert.equal(app.animations[1].now, 900, 'following gravity begins only after the full reaction interval');
+    await app.finishAnimations();
+    assert.equal(app.game.state, 'IDLE');
+    assert.equal(app.game.score, 100);
+    assert.equal(app.game.moves, 1);
+    assert.equal(app.animations.filter(({ frame }) => frame.kind === 'insert').length, 1);
+    board.assertValid();
+  }
 });
