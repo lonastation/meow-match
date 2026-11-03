@@ -42,25 +42,67 @@
     </section>
     <section class="game-shell" aria-label="Meow Match game">
       <div class="scoreboard"><div class="score-item current-score"><span>SCORE</span><strong id="score">0</strong></div><div class="score-item"><span>PERSONAL BEST</span><strong id="best">0</strong></div><div class="score-item"><span>MOVES</span><strong id="moves">0</strong></div></div>
-      <div class="score-notice-slot" role="status" aria-live="polite"><span class="score-notice" id="score-notice" hidden></span></div>
       <div class="board-region" id="board-region"><div class="board-wrap" id="board-wrap">
         <canvas id="board" role="img" tabindex="0" aria-label="9 by 12 spool board. Drag a spool horizontally. Keyboard: up and down select a spool, left and right slide, Enter releases, Escape cancels. Full rows clear with any colors."></canvas>
+        <div class="score-notice-slot" role="status" aria-live="polite" aria-atomic="true"><span class="score-notice" id="score-notice" hidden></span></div>
         <div class="board-overlay" id="game-over" hidden><div class="end-card"><span class="end-cat" aria-hidden="true">=^･ω･^=</span><span class="eyebrow">THE BASKET IS FULL</span><h2>Time for a<br>catnap.</h2><p>You made room for <strong id="final-score">0</strong> points.</p><button class="primary-button" id="play-again" type="button">One more purr <span aria-hidden="true">↗</span></button><span class="end-note">A fresh basket. A fresh start.</span></div></div>
         <div class="board-overlay" id="restart-overlay" hidden><div class="help-card"><span class="eyebrow">A FRESH BALL OF YARN?</span><h2>Start fresh?</h2><p>Your current game will end. Your personal best stays.</p><button class="primary-button" id="confirm-restart" type="button">New game <span aria-hidden="true">↗</span></button><button class="text-button" id="cancel-restart" type="button">Keep playing</button></div></div>
       </div></div>
       <div class="game-bottom">
         <div class="item-toolbar" role="group" aria-label="Three items with 3 uses each per game, and restart">
           <button class="item-button" id="item-cutter" type="button" aria-label="Spool Cutter. 3 uses remaining. One click splits every length 4 spool into two length 2 spools and every length 3 spool into three length 1 spools, using one charge." title="Spool Cutter: one click cuts all length 4 spools into 2 + 2 and all length 3 spools into 1 + 1 + 1. One charge for the whole board; three uses per game.">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8.5 7.5 12 12m-12-3 12-12M12 12h.01"/></svg>
+            <span class="item-icon" aria-hidden="true">
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="m22 28-11-11-2-8q-.5-3 1.5-.5L25 24" fill="#e4e9de" stroke="#8b9a82"/>
+              <path d="m14 27 11-18q2-3 2-.5l-1 9-8 12" fill="#f4f5ea" stroke="#8b9a82"/>
+              <ellipse cx="11" cy="29" rx="6" ry="6.5" transform="rotate(24 11 29)" fill="#efb39d" stroke="#b47f67"/>
+              <ellipse cx="26" cy="29" rx="6" ry="6.5" transform="rotate(-24 26 29)" fill="#efb39d" stroke="#b47f67"/>
+              <ellipse cx="11" cy="29" rx="2.6" ry="3" fill="#fff4e4" stroke="none"/>
+              <ellipse cx="26" cy="29" rx="2.6" ry="3" fill="#fff4e4" stroke="none"/>
+              <circle cx="18.5" cy="21" r="2.2" fill="#f3d79d" stroke="#ad9160"/>
+              <path d="m33 15 .8 2.2L36 18l-2.2.8L33 21l-.8-2.2L30 18l2.2-.8Z" fill="#e5bf76" stroke="none"/>
+            </svg>
+            <span class="item-uses" id="item-cutter-uses">3</span></span><span class="item-label" aria-hidden="true">Cut</span>
           </button>
           <button class="item-button" id="item-color" type="button" aria-label="Color Sweep. 3 uses remaining. Remove all spools of one random color present on the board." title="Color Sweep: remove every spool of one random color on the board. Three uses per game.">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 4 6 6-9 10H6l-3-3 11-13Z"/><path d="m7 12 7 6M16 3l1-1m4 4 1-1M3 21h17"/></svg>
+            <span class="item-icon" aria-hidden="true">
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="m19 18 8-11c3-4 8 0 5 3l-9 12" fill="#efbd99" stroke="#b58b68"/>
+              <path d="m13 18 13 8c-3 7-10 10-20 7 3-4 3-10 7-15Z" fill="#b8cba5" stroke="#82966e"/>
+              <path d="m13 24-3 7m8-5-2 6m7-4-2 4" stroke="#8da47a"/>
+              <path d="m15 16 12 7q2 1 0 3l-1 1-14-8 1-2q1-2 2-1Z" fill="#f5dfaf" stroke="#b5a074"/>
+              <path d="m8 7 1.1 3.2L12 11l-2.9 1L8 15l-1-3-3-1 3.1-.8Z" fill="#e6bf78" stroke="none"/>
+              <circle cx="32" cy="30" r="2.1" fill="#e7a698" stroke="none"/>
+              <circle cx="35" cy="24" r="1.4" fill="#b0c5d1" stroke="none"/>
+            </svg>
+            <span class="item-uses" id="item-color-uses">3</span></span><span class="item-label" aria-hidden="true">Sweep</span>
           </button>
           <button class="item-button" id="item-fill" type="button" aria-label="Fill Five. 3 uses remaining. Fill up to 5 random empty spaces with single spools, prioritizing rows that can clear." title="Fill Five: add up to 5 single spools in empty spaces, prioritizing rows that can clear. Three uses per game.">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="15" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M18 2v8m-4-4h8M12 11v3m-1.5-1.5h3"/></svg>
+            <span class="item-icon" aria-hidden="true">
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <circle cx="13" cy="15" r="7" fill="#edb6ad" stroke="#bd8d85"/>
+              <path d="M8 11q7 2 10 8m-12-4q6 0 10 7m-4-14q-2 5 3 11" stroke="#cf978e" stroke-width="1.3"/>
+              <circle cx="25" cy="16" r="7" fill="#bec4df" stroke="#949cb9"/>
+              <path d="M20 11q-1 7 9 9m-11-4q6-2 10 5m-3-12q-3 5 5 8" stroke="#9ca6c7" stroke-width="1.3"/>
+              <path d="M7 22h26l-3 11q-10 4-20 0Z" fill="#edd29f" stroke="#b39a6c"/>
+              <rect x="5" y="19" width="30" height="5" rx="2.5" fill="#f7e2b7" stroke="#b39a6c"/>
+              <path d="M15 28v1m10-1v1m-7 1q2 3 4 0" stroke="#9d8059"/>
+              <path d="M33 5v6m-3-3h6" stroke="#8ca379" stroke-width="2.4"/>
+            </svg>
+            <span class="item-uses" id="item-fill-uses">3</span></span><span class="item-label" aria-hidden="true">Fill</span>
           </button>
-          <button class="item-button" id="restart-button" type="button" aria-label="Start a new game" title="New game">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9a8 8 0 1 1-.6 6M5 4v5h5"/></svg>
+          <button class="item-button restart-button" id="restart-button" type="button" aria-label="Restart game" title="New game">
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M31 30C39 22 33 8 23 6 15 4 8 8 6 14" stroke="#98ad84" stroke-width="3"/>
+              <path d="m4 8 1 8 7-3" fill="#98ad84" stroke="#98ad84" stroke-width="2"/>
+              <ellipse cx="24" cy="26" rx="10" ry="8" fill="#e8b78d" stroke="#b68b69"/>
+              <path d="M32 25c0 8-12 8-12 3 0-3 5-3 5 0" stroke="#c28f68" stroke-width="2.4"/>
+              <path d="m9 24 1-10 6 4h3l6-3 1 10c0 9-17 10-17-1Z" fill="#f3cba5" stroke="#b68b69"/>
+              <path d="m12 18 2 2m8-2-2 2" stroke="#db9f85" stroke-width="2"/>
+              <path d="M12 25q2 2 4 0m4 0q2 2 4 0" stroke="#967154"/>
+              <path d="m17 28 1 1 1-1" stroke="#bf846c"/>
+            </svg>
+            <span class="item-label" aria-hidden="true">Restart</span>
           </button>
         </div>
         <div class="next-row"><span>NEXT ROW <span aria-hidden="true">↑</span></span><canvas id="next-row" aria-label="Preview of the next bottom row"></canvas></div><div class="game-status" id="game-status" role="status" aria-live="polite"><span class="status-dot"></span><span id="status-text">Your move. Slide a spool.</span></div>

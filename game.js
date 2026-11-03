@@ -321,6 +321,7 @@ if (typeof document !== "undefined") (() => {
       const button = $("item-" + item);
       button.disabled = Boolean(modal) || !game.canUseItem(item);
       button.setAttribute("aria-label", `${label}, ${game.items[item]} uses remaining`);
+      $("item-" + item + "-uses").textContent = String(game.items[item]);
     }
     canvas.classList.toggle("dragging", Boolean(game.drag));
     canvas.setAttribute("aria-busy", String(busy));

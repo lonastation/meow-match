@@ -257,6 +257,7 @@ test('one cutter click immediately splits every eligible spool and consumes exac
   assert.equal(app.game.items.fill, 3);
   await app.finishAnimations();
   assert.equal(app.getElement('item-cutter').getAttribute('aria-label'), 'Spool Cutter, 2 uses remaining');
+  assert.equal(app.getElement('item-cutter-uses').textContent, '2');
   assert.equal(app.getElement('item-color').getAttribute('aria-label'), 'Color Sweep, 3 uses remaining');
   assert.equal(app.getElement('item-fill').getAttribute('aria-label'), 'Fill Five, 3 uses remaining');
   assert.equal(app.game.state, 'IDLE');
@@ -352,6 +353,7 @@ test('item buttons enforce modal and animation locks, display exhaustion, and re
     assert.equal(app.game.items.color, 3, 'an animation cannot launch a second item');
     await app.finishAnimations();
     assert.equal(app.getElement('item-fill').getAttribute('aria-label'), `Fill Five, ${3 - use} uses remaining`);
+    assert.equal(app.getElement('item-fill-uses').textContent, String(3 - use));
   }
   app.getElement('item-fill').emit('click');
   assert.equal(app.game.items.fill, 0);
@@ -359,12 +361,16 @@ test('item buttons enforce modal and animation locks, display exhaustion, and re
   app.getElement('item-color').emit('click');
   await app.finishAnimations();
   assert.equal(app.getElement('item-color').getAttribute('aria-label'), 'Color Sweep, 2 uses remaining');
+  assert.equal(app.getElement('item-color-uses').textContent, '2');
   app.getElement('restart-button').emit('click');
   app.getElement('confirm-restart').emit('click');
   assert.equal(app.game.items.cutter, 3);
   assert.equal(app.game.items.color, 3);
   assert.equal(app.game.items.fill, 3);
   assert.equal(app.getElement('item-fill').getAttribute('aria-label'), 'Fill Five, 3 uses remaining');
+  for (const item of ['cutter', 'color', 'fill']) {
+    assert.equal(app.getElement(`item-${item}-uses`).textContent, '3');
+  }
 });
 
 async function startLongFall(app) {
@@ -453,12 +459,11 @@ function scoreNoticeSnapshot(app) {
   };
 }
 
-test('score feedback has its own slot above the board and restart shares the item controls', () => {
+test('score feedback sits inside the board panel and restart shares the item controls', () => {
   const noticeSlot = HTML_SOURCE.match(/<div\b[^>]*class="[^"]*\bscore-notice-slot\b[^"]*"[^>]*>[\s\S]*?<\/div>/);
-  assert.ok(noticeSlot, 'score feedback needs a reserved element outside the canvas');
+  assert.ok(noticeSlot, 'score feedback keeps its accessible status element');
   assert.match(noticeSlot[0], /<span\b[^>]*id="score-notice"[^>]*\bhidden\b[^>]*>/);
-  const boardRegion = HTML_SOURCE.search(/<div\b[^>]*id="board-region"[^>]*>/);
-  assert.ok(boardRegion >= noticeSlot.index + noticeSlot[0].length, 'the notice slot closes before the board region begins');
+  assert.match(HTML_SOURCE, /id="board-wrap">\s*<canvas\b[^>]*><\/canvas>\s*<div class="score-notice-slot"/, 'feedback belongs to the board panel immediately after the canvas');
   const itemToolbar = HTML_SOURCE.match(/<div\b[^>]*class="[^"]*\bitem-toolbar\b[^"]*"[^>]*>[\s\S]*?<\/div>/);
   assert.ok(itemToolbar);
   for (const id of ['item-cutter', 'item-color', 'item-fill', 'restart-button']) {
@@ -502,7 +507,7 @@ test('score feedback hides when its clear ends, stays cleared through restart, a
   await app.finishAnimations();
   assert.equal(notice.hidden, true);
   assert.equal(notice.textContent, '');
-  assert.deepEqual(app.metrics.texts.filter(call => call.owner === 'board'), [], 'score feedback never draws over board cells');
+  assert.deepEqual(app.metrics.texts.filter(call => call.owner === 'board'), [], 'score feedback remains in the DOM instead of painting into the canvas');
 });
 
 test('resizing during a touch gesture rolls back the drag and ignores its later release', () => {
