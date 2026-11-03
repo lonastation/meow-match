@@ -103,6 +103,8 @@ test('new games and restarts contain exactly three sparse, stable rows and allow
       board.reset();
       checkBoard(board);
       assert.ok(board.spools.size >= 2);
+      assert.ok(board.snapshot().filter(spool => spool.length === 4).length <= 1,
+        `opening board permits at most one length-four spool: seed ${seed}, restart ${restart}`);
       assert.ok(board.snapshot().filter(spool => spool.length === 5).length <= 1,
         `opening board permits at most one length-five spool: seed ${seed}, restart ${restart}`);
       const occupiedRows = board.grid.flatMap((cells, row) => cells.some(id => id !== null) ? [row] : []);
@@ -260,15 +262,243 @@ test('clearing a supported full row causes a second chain clear after rigid grav
   checkBoard(board);
 });
 
+test('the cutter replaces a four with two pairs and a three with three independent singletons', () => {
+  for (const [length, expectedLengths] of [[4, [2, 2]], [3, [1, 1, 1]]]) {
+    const board = new Board();
+    const original = add(board, 4, 2, length, '#123abc');
+    const survivor = { ...add(board, ROWS - 1, 0, 2, '#456def') };
+    const occupiedBefore = board.grid.flat().filter(id => id !== null).length;
+    const nextId = board.nextId;
+    const replacements = board.splitSpool(original.id);
+    assert.equal(board.getSpool(original.id), null);
+    assert.deepEqual(replacements.map(spool => spool.length), expectedLengths);
+    assert.deepEqual(replacements.map(spool => spool.col), length === 4 ? [2, 4] : [2, 3, 4]);
+    assert.ok(replacements.every(spool => spool.row === 4 && spool.color === original.color));
+    assert.equal(new Set(replacements.map(spool => spool.id)).size, replacements.length);
+    assert.ok(replacements.every(spool => spool.id >= nextId));
+    assert.equal(board.grid.flat().filter(id => id !== null).length, occupiedBefore);
+    assert.deepEqual(board.getSpool(survivor.id), survivor, 'cutting does not settle or change other spools');
+    replacements[0].col = 99;
+    assert.equal(board.getSpool(nextId).col, 2, 'returned snapshots cannot mutate the board');
+    const last = replacements[replacements.length - 1];
+    assert.equal(board.moveSpool(last.id, 8), true, 'cut pieces can move independently');
+    checkBoard(board);
+  }
+});
+
+test('cutting an ineligible or missing spool is a no-op', () => {
+  const board = new Board();
+  const singles = add(board, 7, 0, 1);
+  const pair = add(board, 7, 2, 2);
+  const five = add(board, 8, 1, 5);
+  const before = board.snapshot();
+  const gridBefore = board.grid.map(cells => cells.slice());
+  const nextId = board.nextId;
+  for (const id of [singles.id, pair.id, five.id, null, undefined, -1, 1000]) {
+    assert.deepEqual(board.splitSpool(id), []);
+    assert.deepEqual(board.snapshot(), before);
+    assert.deepEqual(board.grid, gridBefore);
+    assert.equal(board.nextId, nextId);
+  }
+  checkBoard(board);
+});
+
+test('the batch cutter splits every original three and four once while preserving cells and other lengths', () => {
+  const board = new Board({ random: () => { throw new Error('cutting preserves existing colors'); } });
+  const targets = [
+    add(board, 0, 1, 3, '#first'),
+    add(board, 3, 0, 4, '#second'),
+    add(board, 3, 4, 3, '#third'),
+    add(board, ROWS - 1, 5, 4, '#fourth'),
+  ];
+  const survivors = [add(board, 0, 8, 1), add(board, 6, 0, 2), add(board, 7, 2, 5)]
+    .map(spool => ({ ...spool }));
+  const occupancy = board.grid.map(row => row.map(id => id !== null));
+  const nextId = board.nextId;
+  const replacements = board.splitAllSpools();
+  assert.equal(replacements.length, 10);
+  assert.equal(new Set(replacements.map(spool => spool.id)).size, 10);
+  assert.ok(replacements.every(spool => spool.id >= nextId && spool.length <= 2));
+  assert.equal(board.spools.size, survivors.length + replacements.length);
+  assert.equal(board.nextId, nextId + 10, 'the batch creates only the requested original-spool fragments');
+  assert.deepEqual(board.grid.map(row => row.map(id => id !== null)), occupancy, 'cutting preserves every occupied position without settling');
+  for (const target of targets) {
+    assert.equal(board.getSpool(target.id), null);
+    const pieces = replacements.filter(spool => spool.color === target.color);
+    assert.deepEqual(pieces.map(spool => spool.length), target.length === 4 ? [2, 2] : [1, 1, 1]);
+    assert.ok(pieces.every(spool => spool.row === target.row));
+    assert.equal(pieces[0].col, target.col);
+    assert.equal(pieces.at(-1).col + pieces.at(-1).length, target.col + target.length);
+  }
+  for (const survivor of survivors) assert.deepEqual(board.getSpool(survivor.id), survivor);
+  replacements[0].col = 99;
+  assert.notEqual(board.getSpool(replacements[0].id).col, 99, 'the returned replacements are detached snapshots');
+  const after = board.snapshot();
+  assert.deepEqual(board.splitAllSpools(), [], 'a second batch cannot reprocess the fragments');
+  assert.deepEqual(board.snapshot(), after);
+  assert.equal(board.nextId, nextId + 10);
+  checkBoard(board);
+});
+
+test('the batch cutter is a no-op when there are no eligible spools', () => {
+  const board = new Board({ random: () => { throw new Error('an empty cut does not need randomness'); } });
+  assert.deepEqual(board.splitAllSpools(), []);
+  assert.equal(board.nextId, 1);
+  add(board, 2, 0, 1);
+  add(board, 4, 1, 2);
+  add(board, 9, 3, 5);
+  const before = board.snapshot();
+  const gridBefore = board.grid.map(row => row.slice());
+  const nextId = board.nextId;
+  assert.deepEqual(board.splitAllSpools(), []);
+  assert.deepEqual(board.snapshot(), before);
+  assert.deepEqual(board.grid, gridBefore);
+  assert.equal(board.nextId, nextId);
+  checkBoard(board);
+});
+
+test('the color item selects an existing color and removes every spool of that color without gravity', () => {
+  for (const [random, expectedColor] of [[() => 0, '#first'], [() => 1 - Number.EPSILON, '#last']]) {
+    const board = new Board({ random });
+    add(board, 1, 0, 4, '#first');
+    add(board, 3, 5, 3, '#last');
+    add(board, ROWS - 1, 1, 2, '#first');
+    add(board, ROWS - 1, 5, 4, '#last');
+    const before = board.snapshot();
+    const nextId = board.nextId;
+    const result = board.removeRandomColor();
+    assert.equal(result.color, expectedColor);
+    assert.deepEqual(result.removed, before.filter(spool => spool.color === expectedColor));
+    assert.deepEqual(board.snapshot(), before.filter(spool => spool.color !== expectedColor));
+    assert.ok(result.removed.every(spool => board.getSpool(spool.id) === null));
+    assert.equal(board.nextId, nextId);
+    checkBoard(board);
+    board.removeRandomColor();
+    assert.equal(board.spools.size, 0);
+    assert.equal(board.removeRandomColor(), null);
+    checkBoard(board);
+  }
+  const empty = new Board({ random: () => { throw new Error('empty board should not sample a color'); } });
+  assert.equal(empty.removeRandomColor(), null);
+});
+
+test('the filler completes supported rows before spending remaining cells elsewhere', () => {
+  const board = new Board({ random: seededRandom(216) });
+  add(board, ROWS - 1, 0, 3);
+  add(board, ROWS - 1, 4, 4);
+  add(board, ROWS - 2, 0, 5);
+  add(board, ROWS - 2, 6, 2);
+  const original = board.snapshot();
+  const added = board.fillEmptySpaces();
+  assert.equal(added.length, 5);
+  assert.deepEqual(added.slice(0, 2).map(spool => spool.row), [ROWS - 1, ROWS - 1]);
+  assert.deepEqual(added.slice(2, 4).map(spool => spool.row), [ROWS - 2, ROWS - 2]);
+  assert.ok(added.every(spool => spool.length === 1));
+  assert.equal(new Set(added.map(spool => spool.row + ':' + spool.col)).size, 5);
+  for (const spool of original) assert.deepEqual(board.getSpool(spool.id), spool);
+  assert.deepEqual(board.fullRows(), [ROWS - 2, ROWS - 1], 'the item leaves clearing to its caller');
+  assert.deepEqual(board.settle(), [], 'filled gaps must survive normal gravity');
+  assert.deepEqual(board.fullRows(), [ROWS - 2, ROWS - 1]);
+  added[0].color = '#changed';
+  assert.notEqual(board.getSpool(added[0].id).color, '#changed');
+  checkBoard(board);
+});
+
+test('the filler prioritizes the fewest missing cells and can complete more than one row', () => {
+  const board = new Board({ random: () => 0 });
+  add(board, ROWS - 1, 0, 5);
+  add(board, ROWS - 1, 5, 3);
+  add(board, ROWS - 2, 0, 3);
+  add(board, ROWS - 2, 5, 4);
+  const added = board.fillEmptySpaces(3);
+  assert.deepEqual(added.map(({ row, col }) => [row, col]), [[ROWS - 1, 8], [ROWS - 2, 3], [ROWS - 2, 4]]);
+  assert.deepEqual(board.fullRows(), [ROWS - 2, ROWS - 1]);
+  checkBoard(board);
+});
+
+test('the filler avoids unsupported tempting gaps and uses random stable spaces when no row can complete', () => {
+  const layouts = new Set();
+  for (let seed = 1; seed <= 100; seed += 1) {
+    const board = new Board({ random: seededRandom(seed * 31) });
+    add(board, ROWS - 1, 0, 1);
+    add(board, ROWS - 1, 8, 1);
+    add(board, ROWS - 2, 0, 4);
+    add(board, ROWS - 2, 5, 4);
+    const added = board.fillEmptySpaces(1);
+    assert.equal(added.length, 1);
+    assert.notDeepEqual([added[0].row, added[0].col], [ROWS - 2, 4], 'unsupported one-cell gap cannot produce a lasting clear');
+    assert.deepEqual(board.settle(), []);
+    layouts.add(added[0].row + ':' + added[0].col);
+    checkBoard(board);
+  }
+  assert.ok(layouts.size > 5, 'equal-priority fallback positions should be randomized');
+});
+
+test('the filler adds exactly five unique cells on empty boards and respects limited capacity', () => {
+  for (let seed = 1; seed <= 100; seed += 1) {
+    const board = new Board({ random: seededRandom(seed * 127) });
+    const added = board.fillEmptySpaces();
+    assert.equal(added.length, 5);
+    assert.equal(new Set(added.map(spool => spool.id)).size, 5);
+    assert.equal(new Set(added.map(spool => spool.row + ':' + spool.col)).size, 5);
+    assert.equal(board.grid.flat().filter(id => id !== null).length, 5);
+    assert.ok(added.every(spool => spool.length === 1));
+    assert.deepEqual(board.settle(), []);
+    checkBoard(board);
+  }
+  const board = new Board({ random: seededRandom(21) });
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      if ((row === 0 && col === 0) || (row === ROWS - 1 && col === COLS - 1)) continue;
+      add(board, row, col, 1);
+    }
+  }
+  assert.equal(board.fillEmptySpaces().length, 2);
+  assert.deepEqual(board.fillEmptySpaces(), []);
+  checkBoard(board);
+  const before = board.snapshot();
+  assert.deepEqual(board.fillEmptySpaces(0), []);
+  for (const count of [-1, 1.5, NaN, COLS * ROWS + 1]) assert.throws(() => board.fillEmptySpaces(count), RangeError);
+  assert.deepEqual(board.snapshot(), before);
+});
+
 test('generated bottom rows contain several valid spools and at least one gap', () => {
   const board = new Board({ random: seededRandom(918273) });
   const lengths = new Set();
   for (let i = 0; i < 2000; i += 1) {
     const specs = board.makeRow();
     checkNewRow(specs);
+    assert.ok(specs.filter(spec => spec.length === 4).length <= 1);
     for (const spec of specs) lengths.add(spec.length);
   }
   assert.deepEqual([...lengths].sort(), [1, 2, 3, 4, 5]);
+});
+
+test('an existing four excludes new fours until its final instance is cut or removed', () => {
+  const board = new Board({ random: seededRandom(1097) });
+  const first = add(board, 3, 0, 4);
+  const last = add(board, ROWS - 1, 3, 4);
+  for (let pass = 0; pass < 2; pass += 1) {
+    const before = board.snapshot();
+    const available = new Set();
+    for (let sample = 0; sample < 1000; sample += 1) {
+      const specs = board.makeRow();
+      checkNewRow(specs);
+      assert.ok(specs.every(spool => spool.length !== 4));
+      for (const spool of specs) available.add(spool.length);
+    }
+    assert.deepEqual([...available].sort(), [1, 2, 3, 5]);
+    assert.deepEqual(board.snapshot(), before);
+    board.splitSpool(pass === 0 ? first.id : last.id);
+  }
+  let sawFour = false;
+  for (let sample = 0; sample < 1000; sample += 1) {
+    const specs = board.makeRow();
+    assert.ok(specs.filter(spool => spool.length === 4).length <= 1);
+    sawFour ||= specs.some(spool => spool.length === 4);
+  }
+  assert.equal(sawFour, true, 'cutting the final four makes that length eligible again');
+  checkBoard(board);
 });
 
 test('an existing length-five spool anywhere on the board excludes new fives without excluding lengths one to four', () => {
@@ -333,7 +563,7 @@ test('length five becomes eligible only after the last existing five clears', ()
   checkBoard(board);
 });
 
-test('long-run generation favors lengths two to four and keeps singletons occasional', () => {
+test('long-run generation favors lengths two and three and keeps fours and singletons occasional', () => {
   const board = new Board({ random: seededRandom(918273) });
   const samples = 10000;
   const counts = new Array(6).fill(0);
@@ -354,6 +584,8 @@ test('long-run generation favors lengths two to four and keeps singletons occasi
   const singleShare = counts[1] / total;
   assert.ok(singleShare >= 0.10 && singleShare < 0.20, `singleton share was ${singleShare}`);
   assert.ok((counts[2] + counts[3] + counts[4]) / total > 0.70, 'medium spools should dominate');
+  assert.ok((counts[2] + counts[3]) / total > 0.65, 'pairs and triples should dominate the available shapes');
+  assert.ok(counts[4] / total > 0.01 && counts[4] / total < 0.08, 'fours should remain available but uncommon');
   assert.ok(counts[5] / total > 0.02 && counts[5] / total < 0.12, 'length five stays an occasional option');
   assert.ok(occupied / samples > 5.8 && occupied / samples < 6.2, 'changing lengths must not increase row density');
   assert.ok(layouts.size > 500, 'the reduction must preserve varied horizontal layouts');
@@ -364,19 +596,21 @@ test('long-run generation favors lengths two to four and keeps singletons occasi
   }
 });
 
-test('row generation preserves every protected gap and opening support with or without an existing five', () => {
+test('row generation preserves every gap and support with each combination of existing long lengths', () => {
   for (let gap = 0; gap < COLS; gap += 1) {
     const supports = [null, ...Array.from({ length: COLS }, (_, col) => col).filter(col => col !== gap)];
     for (const support of supports) {
-      for (const hasFive of [false, true]) {
+      for (const [hasFour, hasFive] of [[false, false], [true, false], [false, true], [true, true]]) {
         const randomSources = [seededRandom(7300 + gap * 101 + (support === null ? 0 : support + 1)), () => 0, () => 1 - Number.EPSILON];
         for (const random of randomSources) {
           const board = new Board({ random });
+          if (hasFour) add(board, ROWS - 2, 1, 4);
           if (hasFive) add(board, ROWS - 1, 1, 5);
           const before = board.snapshot();
           for (let sample = 0; sample < 10; sample += 1) {
             const specs = board._makeRow(gap, support);
             checkNewRow(specs);
+            assert.ok(specs.filter(spec => spec.length === 4).length <= (hasFour ? 0 : 1));
             if (hasFive) assert.ok(specs.every(spec => spec.length <= 4));
             const covers = col => specs.some(spec => spec.col <= col && col < spec.col + spec.length);
             assert.equal(covers(gap), false, `gap ${gap} must remain empty`);
@@ -491,6 +725,8 @@ test('seeded multi-turn stress preserves cell ownership, rigid lengths, and fini
       board.settle();
       clearedRows += resolveRows(board).reduce((sum, count) => sum + count, 0);
       checkBoard(board);
+      assert.ok(board.snapshot().filter(spool => spool.length === 4).length <= 1);
+      assert.ok(board.snapshot().filter(spool => spool.length === 5).length <= 1);
       assert.equal(isStable(board), true);
       assert.deepEqual(board.fullRows(), []);
       for (const spool of board.spools.values()) {

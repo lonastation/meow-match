@@ -71,6 +71,45 @@ async function turn(game, id, col) {
   return game.releaseDrag();
 }
 
+async function drainAnimations(harness, finished, inspect = () => {}) {
+  const completion = finished.then(result => ({ finished: true, result }));
+  let count = 0;
+  while (true) {
+    const step = await Promise.race([harness.nextFrame(), completion]);
+    if (step.finished) return step.result;
+    assert.ok(++count < 100, 'queued turns must finish in finite sequential phases');
+    await inspect(step.frame);
+    step.finish();
+  }
+}
+
+async function flushMicrotasks() {
+  for (let i = 0; i < 12; i += 1) await Promise.resolve();
+}
+
+function clearInteractionFixture() {
+  const board = new Board();
+  add(board, ROWS - 1, 0, 4);
+  add(board, ROWS - 1, 4, 5);
+  const selected = add(board, ROWS - 2, 1, 2);
+  const other = add(board, ROWS - 2, 5, 2);
+  const harness = gatedGame(board);
+  // Fixed sparse rows make the number of queued insertions observable without
+  // unrelated generated clears. Production row generation has its own tests.
+  board.makeRow = () => NEXT_ROW.map(spool => ({ ...spool }));
+  return { board, selected, other, harness };
+}
+
+async function startClearTurn(harness, selected, col = 0) {
+  assert.equal(harness.game.beginDrag(selected.id), true);
+  assert.equal(harness.game.moveDrag(col), true);
+  const finished = harness.game.releaseDrag();
+  const clearing = await harness.nextFrame();
+  assert.equal(clearing.frame.kind, 'clear');
+  assert.equal(harness.game.state, STATES.CLEARING);
+  return { finished, clearing };
+}
+
 // The middle full row clears first, then creates a full row beneath it, and
 // finally frees two narrow bars to fill the gaps in the bottom row.
 function threeChainFixture() {
@@ -158,6 +197,9 @@ test('one valid drag resolves three chain steps at 100, 150, and 200, then inser
   assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
   const insertIndex = frames.findIndex(frame => frame.kind === 'insert');
   assert.equal(frames.slice(0, insertIndex).filter(frame => frame.kind === 'clear').length, 3);
+  assert.equal(frames.filter(frame => frame.kind === 'settle').length, 1, 'one pause follows the entire chain, not every clear');
+  assert.equal(frames[insertIndex - 1].kind, 'settle');
+  assert.deepEqual(frames[insertIndex - 1].before, frames[insertIndex - 1].after);
   assert.equal(board.spools.size, NEXT_ROW.length);
   assert.ok(board.snapshot().every(spool => spool.row === ROWS - 1));
   assert.deepEqual([...new Set(changes.map(change => change.score))], [0, 100, 250, 450]);
@@ -233,8 +275,8 @@ test('a whole-board scan clears nonadjacent full rows in one animation and one m
     if (step.finished) { assert.equal(step.result, true); break; }
     assert.ok(++steps < 100);
     if (step.frame.kind === 'clear') {
-      assert.equal(step.frame.duration, 900);
-      assert.equal(step.frame.holdDuration, 450);
+      assert.equal(step.frame.duration, 1400);
+      assert.equal(step.frame.holdDuration, 1250);
       assert.deepEqual(step.frame.before, step.frame.after, 'clearing never moves the board during its reaction pause');
       assert.deepEqual(step.frame.rows, fullRows);
       assert.deepEqual(scan(), fullRows);
@@ -334,7 +376,7 @@ test('the post-insertion resolution starts a fresh chain at 100 points', async (
   assert.equal(game.moves, 1);
   assert.equal(game.state, STATES.IDLE);
   assert.equal(board.spools.size, 0);
-  assert.deepEqual(frames.filter(frame => frame.kind !== 'fall').map(frame => frame.kind), ['clear', 'insert', 'clear']);
+  assert.deepEqual(frames.filter(frame => frame.kind !== 'fall').map(frame => frame.kind), ['clear', 'settle', 'insert', 'clear']);
   board.assertValid();
 });
 
@@ -348,8 +390,85 @@ test('a valid turn without clearing still inserts exactly one new row', async ()
   assert.equal(game.state, STATES.IDLE);
   assert.deepEqual(clears, []);
   assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
+  assert.equal(frames.filter(frame => frame.kind === 'settle').length, 1, 'valid no-clear moves still pause before insertion');
   assert.equal(board.spools.size, 1 + NEXT_ROW.length);
   assert.equal(board.getSpool(selected.id).length, 2);
+  board.assertValid();
+});
+
+test('the one settling pause holds the stable grid and input lock until insertion, with no second pause afterward', async () => {
+  const board = new Board();
+  const selected = add(board, ROWS - 1, 1, 2);
+  const floating = add(board, 4, 7, 1);
+  const harness = gatedGame(board);
+  const { game, frames } = harness;
+  const incoming = game.nextRow;
+  const insertRow = board.insertRow.bind(board);
+  const makeRow = board.makeRow.bind(board);
+  let insertions = 0;
+  let previewsGenerated = 0;
+  board.insertRow = row => { insertions += 1; return insertRow(row); };
+  board.makeRow = () => { previewsGenerated += 1; return makeRow(); };
+
+  assert.equal(game.beginDrag(selected.id), true);
+  assert.equal(game.moveDrag(3), true);
+  const finished = game.releaseDrag();
+  const falling = await harness.nextFrame();
+  assert.equal(falling.frame.kind, 'fall');
+  assert.ok(falling.frame.moved.some(move => move.id === floating.id));
+  falling.finish();
+
+  const settling = await harness.nextFrame();
+  assert.equal(settling.frame.kind, 'settle');
+  assert.equal(settling.frame.duration, 200);
+  assert.equal(game.state, STATES.RESOLVING);
+  const settledBoard = board.snapshot();
+  assert.deepEqual(settling.frame.before, settledBoard);
+  assert.deepEqual(settling.frame.after, settledBoard);
+  assert.deepEqual(board.fullRows(), []);
+  assert.ok(settledBoard.every(spool => spool.row === ROWS - 1 ||
+    board.grid[spool.row + 1].slice(spool.col, spool.col + spool.length).some(id => id !== null)),
+  'all pieces must already have support before the quiet pause starts');
+  assert.equal(insertions, 0);
+  assert.equal(previewsGenerated, 0);
+  assert.equal(game.nextRow, incoming);
+  assert.equal(game.moves, 1);
+  assert.equal(game.score, 0);
+  assert.equal(game.beginDrag(selected.id), false);
+  assert.equal(game.moveDrag(5), false);
+  assert.equal(game.cancelDrag(), false);
+  assert.equal(game.reset(), false);
+  assert.equal(await game.releaseDrag(), false);
+  await Promise.resolve();
+  assert.equal(harness.pending, settling.frame, 'the turn cannot advance until the pause finishes');
+  assert.deepEqual(board.snapshot(), settledBoard);
+  assert.equal(insertions, 0);
+  assert.equal(previewsGenerated, 0);
+  settling.finish();
+
+  const insertion = await harness.nextFrame();
+  assert.equal(insertion.frame.kind, 'insert');
+  assert.equal(insertion.frame.duration, 180);
+  assert.equal(game.state, STATES.INSERTING_ROW);
+  assert.deepEqual(insertion.frame.before, settledBoard);
+  assert.equal(insertions, 1);
+  assert.equal(previewsGenerated, 0);
+  insertion.finish();
+
+  const fallingAfterInsertion = await harness.nextFrame();
+  assert.equal(fallingAfterInsertion.frame.kind, 'fall');
+  assert.deepEqual(fallingAfterInsertion.frame.moved, [{ id: selected.id, fromRow: ROWS - 2, toRow: ROWS - 1 }]);
+  assert.equal(game.state, STATES.RESOLVING);
+  assert.equal(game.nextRow, incoming);
+  assert.equal(previewsGenerated, 0);
+  fallingAfterInsertion.finish();
+  assert.equal(await finished, true);
+  assert.deepEqual(frames.map(frame => frame.kind), ['fall', 'settle', 'insert', 'fall']);
+  assert.equal(game.state, STATES.IDLE);
+  assert.equal(insertions, 1);
+  assert.equal(previewsGenerated, 1);
+  assert.equal(game.moves, 1);
+  assert.equal(game.score, 0);
   board.assertValid();
 });
 
@@ -435,7 +554,7 @@ test('sliding a support finishes all resulting falls and chains before insertion
   board.assertValid();
 });
 
-test('every animation phase locks dragging, cancellation, reset, and duplicate release', async () => {
+test('fall, settle, and insertion lock input while clear phases keep their captured rows locked', async () => {
   const { board, selected, nextRow } = bothResolutionFixture();
   const queue = [];
   let listener = null;
@@ -461,19 +580,32 @@ test('every animation phase locks dragging, cancellation, reset, and duplicate r
     assert.ok(animationCount < 100, 'the turn must finish in finite animation steps');
     const { frame, done } = step;
     kinds.add(frame.kind);
-    assert.equal(game.state, frame.kind === 'insert' ? STATES.INSERTING_ROW : STATES.RESOLVING);
+    const state = frame.kind === 'insert' ? STATES.INSERTING_ROW :
+      frame.kind === 'clear' ? STATES.CLEARING : STATES.RESOLVING;
+    assert.equal(game.state, state);
     if (frame.kind === 'fall') {
-      assert.ok(frame.duration >= 360 && frame.duration <= Math.round(260 * Math.sqrt(ROWS - 1)));
+      assert.ok(frame.duration >= 250 && frame.duration <= 550);
     } else if (frame.kind === 'clear') {
-      assert.equal(frame.duration, 900);
-      assert.equal(frame.holdDuration, 450);
+      assert.equal(frame.duration, 1400);
+      assert.equal(frame.holdDuration, 1250);
+    } else if (frame.kind === 'settle') {
+      assert.equal(frame.duration, 200);
+      assert.deepEqual(frame.before, frame.after, 'settling feedback cannot move any spool');
     } else {
-      assert.equal(frame.duration, 420);
+      assert.equal(frame.duration, 180);
     }
     const before = board.snapshot();
     const score = game.score;
     const moves = game.moves;
-    assert.equal(game.beginDrag(board.snapshot()[0].id), false);
+    if (frame.kind === 'clear') {
+      for (const spool of board.snapshot().filter(spool => frame.rows.includes(spool.row))) {
+        assert.equal(game.canBeginDrag(spool.id), false);
+        assert.equal(game.beginDrag(spool.id), false);
+      }
+    } else {
+      assert.equal(game.canBeginDrag(board.snapshot()[0].id), false);
+      assert.equal(game.beginDrag(board.snapshot()[0].id), false);
+    }
     assert.equal(game.moveDrag(0), false);
     assert.equal(game.cancelDrag(), false);
     assert.equal(game.reset(), false);
@@ -484,10 +616,261 @@ test('every animation phase locks dragging, cancellation, reset, and duplicate r
     board.assertValid();
     done();
   }
-  assert.deepEqual([...kinds].sort(), ['clear', 'fall', 'insert']);
+  assert.deepEqual([...kinds].sort(), ['clear', 'fall', 'insert', 'settle']);
   assert.equal(game.state, STATES.IDLE);
   assert.equal(game.score, 200);
   assert.equal(game.moves, 1);
+});
+
+test('survivors move on the live grid during clearing and each valid release queues exactly one serial insertion', { timeout: 3000 }, async () => {
+  const { board, selected, other, harness } = clearInteractionFixture();
+  const { game, frames } = harness;
+  const { finished, clearing } = await startClearTurn(harness, selected);
+  const capturedRow = [...board.grid[ROWS - 1]];
+  const incoming = game.nextRow;
+  const makeRow = board.makeRow.bind(board);
+  let generated = 0;
+  board.makeRow = () => {
+    assert.equal(harness.pending, null, 'new previews wait for the preceding resolution');
+    assert.deepEqual(board.fullRows(), []);
+    generated += 1;
+    return makeRow();
+  };
+
+  assert.equal(game.canBeginDrag(selected.id), true);
+  assert.equal(game.canBeginDrag(other.id), true);
+  assert.equal(game.canBeginDrag(99999), false);
+  for (const id of new Set(capturedRow)) {
+    assert.equal(game.canBeginDrag(id), false);
+    assert.equal(game.beginDrag(id), false);
+  }
+  assert.equal(game.beginDrag(selected.id), true);
+  assert.equal(game.drag.duringClear, true);
+  assert.equal(game.state, STATES.CLEARING);
+  assert.equal(game.canBeginDrag(other.id), false, 'only one spool can be held');
+  assert.equal(game.beginDrag(other.id), false);
+  assert.equal(game.moveDrag(100), true);
+  assert.equal(board.getSpool(selected.id).col, 3, 'the next spool still blocks the drag');
+  assert.equal(game.moveDrag(-100), true);
+  assert.equal(board.getSpool(selected.id).col, 0, 'the board edge still clamps the drag');
+  assert.equal(game.moveDrag(2), true);
+  assert.equal(board.getSpool(selected.id).row, ROWS - 2, 'no gravity runs during a clear-time drag');
+  assert.deepEqual(board.grid[ROWS - 1], capturedRow);
+  assert.equal(clearing.frame.before.find(spool => spool.id === selected.id).col, 0,
+    'moving a survivor cannot mutate the captured animation snapshot');
+  assert.equal(await game.releaseDrag(), true, 'a nested release must return without launching another resolver');
+  assert.equal(harness.pending, clearing.frame);
+  assert.equal(game.pendingRows, 2);
+  assert.equal(game.moves, 2);
+  assert.equal(game.score, 0);
+  assert.equal(game.state, STATES.CLEARING);
+  assert.equal(game.canBeginDrag(selected.id), true);
+  assert.equal(game.beginDrag(selected.id), true);
+  assert.equal(game.moveDrag(1), true);
+  assert.equal(await game.releaseDrag(), true);
+  assert.equal(game.pendingRows, 3);
+  assert.equal(game.moves, 3);
+  assert.equal(game.nextRow, incoming);
+  assert.equal(generated, 0);
+  assert.equal(frames.length, 1, 'queued moves cannot start overlapping animations');
+  board.assertValid();
+
+  clearing.finish();
+  assert.equal(await drainAnimations(harness, finished), true);
+  assert.equal(frames.filter(frame => frame.kind === 'clear').length, 1);
+  assert.equal(frames.filter(frame => frame.kind === 'settle').length, 3);
+  assert.equal(frames.filter(frame => frame.kind === 'insert').length, 3);
+  assert.equal(generated, 3, 'each inserted row is followed by a fresh stable-board preview');
+  assert.equal(game.pendingRows, 0);
+  assert.equal(game.moves, 3);
+  assert.equal(game.score, 100);
+  assert.equal(game.state, STATES.IDLE);
+  board.assertValid();
+});
+
+test('clear-time taps, clamped moves, round trips, and cancellation add no queued rows', { timeout: 3000 }, async () => {
+  const { board, selected, harness } = clearInteractionFixture();
+  const { game, frames } = harness;
+  const { finished, clearing } = await startClearTurn(harness, selected);
+  const before = board.snapshot();
+  for (const mode of ['tap', 'clamped', 'roundtrip', 'cancel']) {
+    assert.equal(game.beginDrag(selected.id), true);
+    if (mode === 'clamped') assert.equal(game.moveDrag(-20), false);
+    if (mode === 'roundtrip' || mode === 'cancel') assert.equal(game.moveDrag(3), true);
+    if (mode === 'roundtrip') assert.equal(game.moveDrag(0), true);
+    if (mode === 'cancel') assert.equal(game.cancelDrag(), true);
+    else assert.equal(await game.releaseDrag(), false);
+    assert.deepEqual(board.snapshot(), before, mode);
+    assert.equal(game.drag, null);
+    assert.equal(game.pendingRows, 1);
+    assert.equal(game.moves, 1);
+    assert.equal(game.state, STATES.CLEARING);
+    assert.equal(game.canBeginDrag(selected.id), true, 'the ongoing clear stays open after a no-op');
+    assert.equal(harness.pending, clearing.frame);
+  }
+  clearing.finish();
+  assert.equal(await drainAnimations(harness, finished), true);
+  assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
+  assert.equal(game.pendingRows, 0);
+  assert.equal(game.moves, 1);
+  board.assertValid();
+});
+
+test('a held survivor outlasts the clear deadline while deletion and scoring finish on schedule', async t => {
+  for (const mode of ['valid release', 'no-op release', 'cancel']) {
+    await t.test(mode, { timeout: 3000 }, async () => {
+      const { board, selected, other, harness } = clearInteractionFixture();
+      const { game, frames } = harness;
+      const { finished, clearing } = await startClearTurn(harness, selected);
+      const capturedIds = new Set(board.grid[ROWS - 1]);
+      const settle = board.settle.bind(board);
+      let gravityPhases = 0;
+      board.settle = () => { gravityPhases += 1; return settle(); };
+      assert.equal(game.beginDrag(selected.id), true);
+      assert.equal(game.moveDrag(2), true);
+      clearing.finish();
+      await flushMicrotasks();
+
+      assert.ok([...capturedIds].every(id => board.getSpool(id) === null), 'the clear batch is removed at its deadline');
+      assert.equal(game.score, 100, 'the score must not wait for the held pointer');
+      assert.equal(game.state, STATES.CLEARING);
+      assert.equal(game.drag.id, selected.id);
+      assert.equal(board.getSpool(selected.id).row, ROWS - 2);
+      assert.equal(board.getSpool(selected.id).col, 2);
+      assert.equal(gravityPhases, 0);
+      assert.equal(harness.pending, null, 'the ended clear is not extended as another animation');
+      assert.equal(frames.length, 1);
+      assert.equal(game.pendingRows, 1);
+      assert.equal(game.canBeginDrag(other.id), false);
+      assert.equal(game.beginDrag(other.id), false);
+      assert.equal(game.reset(), false);
+      assert.equal(game.moveDrag(3), true, 'the already-held drag remains controllable after the deadline');
+      if (mode === 'cancel') {
+        assert.equal(game.cancelDrag(), true);
+        assert.equal(board.getSpool(selected.id).col, 0);
+      } else {
+        if (mode === 'no-op release') assert.equal(game.moveDrag(0), true);
+        assert.equal(await game.releaseDrag(), mode === 'valid release');
+      }
+      assert.equal(game.canBeginDrag(other.id), false, 'the expired clear window cannot acquire another drag');
+      assert.equal(game.beginDrag(other.id), false);
+      assert.equal(await drainAnimations(harness, finished), true);
+      const expectedMoves = mode === 'valid release' ? 2 : 1;
+      assert.equal(frames.filter(frame => frame.kind === 'insert').length, expectedMoves);
+      assert.equal(game.moves, expectedMoves);
+      assert.equal(game.score, 100);
+      assert.equal(game.pendingRows, 0);
+      assert.equal(game.state, STATES.IDLE);
+      assert.ok(gravityPhases > 0);
+      board.assertValid();
+    });
+  }
+});
+
+test('steering a surviving spool during clearing can create the next chain without restarting its score multiplier', { timeout: 3000 }, async () => {
+  const { board, selected } = threeChainFixture();
+  const harness = gatedGame(board);
+  const { game, frames, clears } = harness;
+  board.makeRow = () => NEXT_ROW.map(spool => ({ ...spool }));
+  const { finished, clearing } = await startClearTurn(harness, selected, 6);
+  assert.equal(game.beginDrag(selected.id), true);
+  assert.equal(game.moveDrag(5), true);
+  assert.equal(await game.releaseDrag(), true);
+  assert.equal(game.score, 0);
+  assert.equal(game.pendingRows, 2);
+  clearing.finish();
+  assert.equal(await drainAnimations(harness, finished), true);
+  assert.deepEqual(clears, [
+    { rows: [ROWS - 3], chain: 1, points: 100 },
+    { rows: [ROWS - 2], chain: 2, points: 150 },
+    { rows: [ROWS - 1], chain: 3, points: 200 },
+  ]);
+  const firstInsertion = frames.findIndex(frame => frame.kind === 'insert');
+  assert.equal(frames.slice(0, firstInsertion).filter(frame => frame.kind === 'clear').length, 3);
+  assert.equal(frames.filter(frame => frame.kind === 'insert').length, 2);
+  assert.equal(game.score, 450);
+  assert.equal(game.moves, 2);
+  assert.equal(game.pendingRows, 0);
+  assert.equal(game.state, STATES.IDLE);
+  board.assertValid();
+});
+
+test('a drag during a post-insertion clear keeps the existing resolver alive for its queued row', { timeout: 3000 }, async () => {
+  const { board, selected, nextRow } = bothResolutionFixture();
+  const survivor = add(board, ROWS - 3, 0, 1);
+  const harness = gatedGame(board);
+  const { game, frames, clears } = harness;
+  game.nextRow = nextRow;
+  board.makeRow = () => NEXT_ROW.map(spool => ({ ...spool }));
+  assert.equal(game.beginDrag(selected.id), true);
+  assert.equal(game.moveDrag(7), true);
+  const finished = game.releaseDrag();
+  let queued = false;
+  assert.equal(await drainAnimations(harness, finished, async frame => {
+    if (frame.kind !== 'clear' || clears.length !== 2) return;
+    assert.equal(frames.filter(value => value.kind === 'insert').length, 1);
+    assert.equal(game.pendingRows, 0, 'the original insertion has already been consumed');
+    assert.equal(game.score, 100);
+    assert.equal(game.canBeginDrag(survivor.id), true);
+    assert.equal(game.beginDrag(survivor.id), true);
+    assert.equal(game.moveDrag(2), true);
+    assert.equal(await game.releaseDrag(), true);
+    assert.equal(game.pendingRows, 1);
+    assert.equal(harness.pending, frame);
+    queued = true;
+  }), true);
+  assert.equal(queued, true);
+  assert.deepEqual(clears, [
+    { rows: [ROWS - 2], chain: 1, points: 100 },
+    { rows: [ROWS - 1], chain: 1, points: 100 },
+  ]);
+  assert.equal(frames.filter(frame => frame.kind === 'insert').length, 2);
+  assert.equal(frames.filter(frame => frame.kind === 'settle').length, 2);
+  assert.equal(game.moves, 2);
+  assert.equal(game.score, 200);
+  assert.equal(game.pendingRows, 0);
+  assert.equal(game.state, STATES.IDLE);
+  board.assertValid();
+});
+
+test('overflow after an earlier queued insertion aborts all remaining rows and allows a clean reset', { timeout: 3000 }, async () => {
+  const board = new Board();
+  for (let row = 0; row < ROWS - 1; row += 1) add(board, row, 0, 1);
+  add(board, ROWS - 1, 0, 4);
+  add(board, ROWS - 1, 4, 5);
+  const selected = add(board, ROWS - 2, 4, 1);
+  const harness = gatedGame(board);
+  const { game, frames } = harness;
+  board.makeRow = () => NEXT_ROW.map(spool => ({ ...spool }));
+  const { finished, clearing } = await startClearTurn(harness, selected, 5);
+  for (const col of [6, 7]) {
+    assert.equal(game.beginDrag(selected.id), true);
+    assert.equal(game.moveDrag(col), true);
+    assert.equal(await game.releaseDrag(), true);
+  }
+  assert.equal(game.pendingRows, 3);
+  clearing.finish();
+  assert.equal(await drainAnimations(harness, finished), true);
+  assert.equal(frames.filter(frame => frame.kind === 'insert').length, 1);
+  assert.equal(frames.filter(frame => frame.kind === 'settle').length, 1, 'overflow is checked before the next pause');
+  assert.equal(game.pendingRows, 0);
+  assert.equal(game.moves, 3);
+  assert.equal(game.score, 100);
+  assert.equal(game.state, STATES.GAME_OVER);
+  assert.ok(board.grid[0].some(id => id !== null));
+  assert.equal(game.canBeginDrag(selected.id), false);
+  assert.equal(game.beginDrag(selected.id), false);
+  const finalBoard = board.snapshot();
+  await flushMicrotasks();
+  assert.deepEqual(board.snapshot(), finalBoard);
+  board.assertValid();
+  assert.equal(game.reset(), true);
+  assert.equal(game.pendingRows, 0);
+  assert.equal(game.moves, 0);
+  assert.equal(game.score, 0);
+  assert.equal(game.drag, null);
+  assert.equal(game.state, STATES.IDLE);
+  board.assertValid();
 });
 
 test('top overflow ends the turn before insertion or post-insertion gravity can hide it', async () => {

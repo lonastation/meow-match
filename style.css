@@ -391,6 +391,15 @@ button svg {
   color: #5a6550
 }
 
+.help-card {
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 5px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: #a4b196 transparent
+}
+
 .end-card > .eyebrow, .help-card > .eyebrow {
   display: block;
   font-size: 8px;
@@ -431,6 +440,16 @@ button svg {
   font-size: 10px!important
 }
 
+.help-items {
+  text-align: left;
+  margin: 13px 0
+}
+
+.help-items p {
+  font-size: 11px;
+  margin: 8px 0
+}
+
 .primary-button {
   display: flex;
   justify-content: space-between;
@@ -452,6 +471,11 @@ button svg {
   background: #49684e
 }
 
+.help-card .primary-button {
+  min-width: 0;
+  width: min(100%, 170px)
+}
+
 .end-note {
   font-size: 10px;
   color: #819174
@@ -470,6 +494,39 @@ button svg {
 .game-bottom {
   flex-shrink: 0;
   padding-top: 12px
+}
+
+.item-toolbar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px
+}
+
+.item-button {
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  padding: 6px;
+  border: 1px solid #d9dfce;
+  border-radius: 8px;
+  background: #f0f3e8;
+  color: #607754
+}
+
+.item-button:hover:not(:disabled) {
+  background: #e5ebd9;
+  border-color: #b6c5a5
+}
+
+.item-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round
 }
 
 .next-row {
@@ -510,7 +567,9 @@ button svg {
   color: #939782;
   font-size: 10px;
   letter-spacing: .2px;
-  min-height: 24px
+  min-height: 24px;
+  text-align: center;
+  line-height: 1.4
 }
 
 .status-dot {
@@ -734,6 +793,15 @@ button svg {
     padding-top: 7px
   }
 
+  .item-toolbar {
+    margin-bottom: 7px
+  }
+
+  .item-button {
+    min-height: 36px;
+    padding: 4px 5px
+  }
+
   .next-row {
     padding-bottom: 6px
   }
@@ -777,6 +845,9 @@ button svg {
   }
 
   .layout {
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
     padding: 0 0 5px;
     max-width: 630px
   }
@@ -833,6 +904,17 @@ button svg {
     grid-column: 3;
     grid-row: 1/3;
     align-self: center
+  }
+
+  .item-toolbar {
+    grid-template-columns: 1fr;
+    gap: 5px;
+    margin-bottom: 8px
+  }
+
+  .item-button {
+    min-height: 32px;
+    padding: 5px 7px
   }
 
   .next-row {

@@ -24,7 +24,10 @@
         if (pieces.length >= 2) {
           layouts.push({
             pieces: pieces.slice(), mask, singles,
-            weight: pieces.some((piece) => piece.length === 5) ? 1 : 3
+            // Four-cell spools are particularly awkward to move around a
+            // protected gap. Prefer pairs and triples whenever they fit.
+            weight: pieces.some((piece) => piece.length === 4) ? 1 :
+              pieces.some((piece) => piece.length === 5) ? 3 : 12
           });
         }
         return;
@@ -114,6 +117,101 @@
 
     snapshot() {
       return Array.from(this.spools.values(), (spool) => ({ ...spool }));
+    }
+
+    _removeSpool(id) {
+      const spool = this._requireSpool(id);
+      for (let col = spool.col; col < spool.col + spool.length; col += 1) this.grid[spool.row][col] = null;
+      this.spools.delete(id);
+      return { ...spool };
+    }
+
+    splitSpool(id) {
+      const spool = this.getSpool(id);
+      if (!spool || (spool.length !== 3 && spool.length !== 4)) return [];
+      const lengths = spool.length === 4 ? [2, 2] : [1, 1, 1];
+      // Check the complete replacement before removing the original spool.
+      requireInteger(this.nextId + lengths.length - 1, "id", 1, Number.MAX_SAFE_INTEGER - 1);
+      this._removeSpool(id);
+      let col = spool.col;
+      return lengths.map((length) => {
+        const added = this.addSpool({ row: spool.row, col, length, color: spool.color });
+        col += length;
+        return { ...added };
+      });
+    }
+
+    splitAllSpools() {
+      // Capture the original targets so each eligible spool is cut once. The
+      // controller settles their replacements together after this batch.
+      const targets = this.snapshot().filter((spool) => spool.length === 3 || spool.length === 4);
+      if (targets.length === 0) return [];
+      const replacements = targets.reduce((count, spool) => count + (spool.length === 3 ? 3 : 2), 0);
+      requireInteger(this.nextId + replacements - 1, "id", 1, Number.MAX_SAFE_INTEGER - 1);
+      return targets.flatMap((spool) => this.splitSpool(spool.id));
+    }
+
+    removeRandomColor() {
+      const colors = [...new Set(Array.from(this.spools.values(), (spool) => spool.color))];
+      if (colors.length === 0) return null;
+      const color = colors[this._int(colors.length)];
+      const removed = this.snapshot().filter((spool) => spool.color === color)
+        .map((spool) => this._removeSpool(spool.id));
+      return { color, removed };
+    }
+
+    fillEmptySpaces(count = 5) {
+      requireInteger(count, "count", 0, COLS * ROWS);
+      const added = [];
+      // A support must itself be stable. Otherwise a new singleton could fall
+      // out of a promising row as soon as the controller applies gravity.
+      const stable = new Set();
+      const refreshSupports = () => {
+        stable.clear();
+        for (const spool of Array.from(this.spools.values()).sort((a, b) => b.row - a.row)) {
+          if (spool.row === ROWS - 1 || this.grid[spool.row + 1]
+            .slice(spool.col, spool.col + spool.length).some((id) => stable.has(id))) stable.add(spool.id);
+        }
+      };
+      const isSupported = (row, col) => row === ROWS - 1 || stable.has(this.grid[row + 1][col]);
+      const place = ({ row, col }) => {
+        const spool = this.addSpool({ row, col, length: 1 });
+        stable.add(spool.id);
+        added.push({ ...spool });
+      };
+
+      while (added.length < count) {
+        refreshSupports();
+        const remaining = count - added.length;
+        const supported = [];
+        const completable = [];
+        for (let row = 0; row < ROWS; row += 1) {
+          const gaps = [];
+          let stableRow = true;
+          for (let col = 0; col < COLS; col += 1) {
+            const id = this.grid[row][col];
+            if (id === null) {
+              const cell = { row, col };
+              gaps.push(cell);
+              if (isSupported(row, col)) supported.push(cell);
+              else stableRow = false;
+            } else if (!stable.has(id)) stableRow = false;
+          }
+          if (stableRow && gaps.length > 0 && gaps.length <= remaining) completable.push(gaps);
+        }
+        if (supported.length === 0) break;
+        if (completable.length > 0) {
+          const fewestGaps = Math.min(...completable.map((gaps) => gaps.length));
+          const closestRows = completable.filter((gaps) => gaps.length === fewestGaps);
+          const cells = closestRows[this._int(closestRows.length)].slice();
+          // Randomize equal-priority positions while finishing this row before
+          // spending any remaining cells elsewhere on the board.
+          while (cells.length > 0) place(cells.splice(this._int(cells.length), 1)[0]);
+        } else {
+          place(supported[this._int(supported.length)]);
+        }
+      }
+      return added;
     }
 
     reset() {
@@ -218,27 +316,31 @@
       // Remove the complete batch synchronously. No gravity, rendering, or
       // callbacks run between removals, including rows far apart on the board.
       for (const id of ids) {
-        const spool = this._requireSpool(id);
-        removed.push({ ...spool });
-        for (let x = spool.col; x < spool.col + spool.length; x += 1) this.grid[spool.row][x] = null;
-        this.spools.delete(id);
+        removed.push(this._removeSpool(id));
       }
       // No cell compression: the caller resolves rigid-body gravity afterward.
       return removed;
     }
 
     _makeRow(gap, support = null) {
-      const occupied = 4 + this._int(5);
-      // Long spools tend to linger: wait until every existing length-five spool
-      // clears before allowing another. Never resize or remove existing yarn.
-      const hasLongSpool = Array.from(this.spools.values()).some((spool) => spool.length === 5);
-      let candidates = rowLayouts(occupied, gap).filter((layout) =>
-        (support === null || (layout.mask & (1 << support)) !== 0) &&
-        (!hasLongSpool || layout.pieces.every((piece) => piece.length !== 5)));
+      let occupied = 4 + this._int(5);
+      // Each long length has its own cap: a new four or five becomes eligible
+      // only after the last existing spool of that length leaves the board.
+      const existingLengths = new Set(Array.from(this.spools.values(), (spool) => spool.length));
+      let candidates;
+      do {
+        candidates = rowLayouts(occupied, gap).filter((layout) =>
+          (support === null || (layout.mask & (1 << support)) !== 0) &&
+          layout.pieces.filter((piece) => piece.length === 4).length <= (existingLengths.has(4) ? 0 : 1) &&
+          (!existingLengths.has(5) || layout.pieces.every((piece) => piece.length !== 5)));
+        // A gap can split eight cells into segments that need more than three
+        // short spools. Reduce density only enough to find a legal layout.
+        if (candidates.length === 0) occupied -= 1;
+      } while (candidates.length === 0 && occupied >= 4);
 
       // Choose whole spool layouts rather than scattering individual cells,
       // which made single-cell fragments dominate. About one third of rows
-      // request one singleton; most spools consequently have lengths 2–4.
+      // request one singleton; most spools consequently have lengths 2–3.
       const wantSingleton = this._int(100) < 35;
       const matchingSingles = candidates.filter((layout) => (layout.singles === 1) === wantSingleton);
       if (matchingSingles.length) candidates = matchingSingles;
