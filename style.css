@@ -520,12 +520,6 @@ button svg {
   line-height: 1
 }
 
-.item-label {
-  font-size: 9px;
-  line-height: 1;
-  letter-spacing: .2px
-}
-
 .restart-button {
   margin-left: 5px;
   color: #858775
