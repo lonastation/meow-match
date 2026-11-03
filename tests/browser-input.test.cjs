@@ -13,6 +13,7 @@ const BOTTOM_CENTER_Y = (ROWS - 0.5) * CELL;
 const ROOT = path.resolve(__dirname, '..');
 const ENGINE_SOURCE = fs.readFileSync(path.join(ROOT, 'engine.js'), 'utf8');
 const GAME_SOURCE = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8');
+const HTML_SOURCE = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 
 function eventTarget() {
   const listeners = new Map();
@@ -97,6 +98,7 @@ function browserHarness({ reducedMotion = false } = {}) {
   }
 
   function getElement(id) {
+    if (['help-button', 'close-help', 'help-overlay'].includes(id)) return null;
     if (!nodes.has(id)) nodes.set(id, makeElement(id));
     return nodes.get(id);
   }
@@ -312,10 +314,9 @@ test('board keyboard and pointer controls remain ordinary sliding controls aroun
 });
 
 test('all item buttons reject activation during drags, modals, and item resolution', async () => {
-  for (const lock of ['drag', 'help', 'restart', 'resolution']) {
+  for (const lock of ['drag', 'restart', 'resolution']) {
     const { app, board } = cutterFixture();
     if (lock === 'drag') app.pointer('pointerdown', CELL);
-    if (lock === 'help') app.getElement('help-button').emit('click');
     if (lock === 'restart') app.getElement('restart-button').emit('click');
     if (lock === 'resolution') app.getElement('item-fill').emit('click');
     const beforeBoard = JSON.stringify(board.snapshot());
@@ -327,7 +328,6 @@ test('all item buttons reject activation during drags, modals, and item resoluti
     assert.equal(JSON.stringify(board.snapshot()), beforeBoard, lock);
     assert.equal(JSON.stringify(app.game.items), beforeItems, lock);
     if (lock === 'drag') app.pointer('pointercancel', CELL);
-    if (lock === 'help') app.getElement('close-help').emit('click');
     if (lock === 'restart') app.getElement('cancel-restart').emit('click');
     await app.finishAnimations();
     assert.equal(app.game.items.cutter, 3, lock);
@@ -338,11 +338,11 @@ test('all item buttons reject activation during drags, modals, and item resoluti
 
 test('item buttons enforce modal and animation locks, display exhaustion, and refill on restart', async () => {
   const { app } = cutterFixture();
-  app.getElement('help-button').emit('click');
+  app.getElement('restart-button').emit('click');
   assert.equal(app.getElement('item-fill').disabled, true);
   app.getElement('item-fill').emit('click');
   assert.equal(app.game.items.fill, 3);
-  app.getElement('close-help').emit('click');
+  app.getElement('cancel-restart').emit('click');
   for (let use = 1; use <= 3; use += 1) {
     app.getElement('item-fill').emit('click');
     assert.equal(app.game.items.fill, 3 - use);
@@ -434,15 +434,76 @@ async function startClear(app, { multipleRows = false } = {}) {
 
 async function sampleBoardFrame(app, milliseconds) {
   const firstImage = app.metrics.drawImages.length;
-  const firstText = app.metrics.texts.length;
   await app.advance(milliseconds);
   const boardImages = app.metrics.drawImages.slice(firstImage).filter(call => call.owner === 'board');
   return {
     spools: drawnSpools(app, firstImage),
     background: boardImages.find(call => call.args[0].height > CELL * 2),
-    popup: app.metrics.texts.slice(firstText).filter(call => call.owner === 'board').at(-1),
+    notice: scoreNoticeSnapshot(app),
   };
 }
+
+function scoreNoticeSnapshot(app) {
+  const notice = app.getElement('score-notice');
+  return {
+    text: notice.textContent,
+    hidden: notice.hidden,
+    alpha: Number(notice.style.opacity),
+    layout: Object.fromEntries(Object.entries(notice.style).filter(([key]) => key !== 'opacity')),
+  };
+}
+
+test('score feedback has its own slot above the board and restart shares the item controls', () => {
+  const noticeSlot = HTML_SOURCE.match(/<div\b[^>]*class="[^"]*\bscore-notice-slot\b[^"]*"[^>]*>[\s\S]*?<\/div>/);
+  assert.ok(noticeSlot, 'score feedback needs a reserved element outside the canvas');
+  assert.match(noticeSlot[0], /<span\b[^>]*id="score-notice"[^>]*\bhidden\b[^>]*>/);
+  const boardRegion = HTML_SOURCE.search(/<div\b[^>]*id="board-region"[^>]*>/);
+  assert.ok(boardRegion >= noticeSlot.index + noticeSlot[0].length, 'the notice slot closes before the board region begins');
+  const itemToolbar = HTML_SOURCE.match(/<div\b[^>]*class="[^"]*\bitem-toolbar\b[^"]*"[^>]*>[\s\S]*?<\/div>/);
+  assert.ok(itemToolbar);
+  for (const id of ['item-cutter', 'item-color', 'item-fill', 'restart-button']) {
+    assert.match(itemToolbar[0], new RegExp(`<button\\b[^>]*id="${id}"[^>]*>`));
+  }
+  assert.doesNotMatch(HTML_SOURCE, /id="(?:help-button|close-help|help-overlay)"/);
+  assert.doesNotMatch(HTML_SOURCE, /class="[^"]*\bgame-toolbar\b/);
+});
+
+test('score feedback hides when its clear ends, stays cleared through restart, and shows fresh clear points', async () => {
+  const app = browserHarness();
+  const notice = app.getElement('score-notice');
+  assert.equal(notice.hidden, true);
+  assert.equal(notice.textContent, '');
+  await startClear(app);
+  assert.equal(notice.hidden, false);
+  assert.equal(notice.textContent, 'MEOW-VELOUS!  +100');
+  assert.equal(notice.style.opacity, '1');
+  await app.advance(1400);
+  assert.equal(app.game.score, 100);
+  assert.equal(notice.hidden, true, 'feedback disappears when the clear finishes, before the following fall');
+  assert.equal(notice.textContent, '');
+  assert.equal(notice.style.opacity, '0');
+  await app.finishAnimations();
+  app.getElement('restart-button').emit('click');
+  assert.equal(app.getElement('restart-overlay').hidden, false);
+  app.getElement('cancel-restart').emit('click');
+  assert.equal(app.game.score, 100);
+  assert.equal(notice.hidden, true);
+  app.getElement('restart-button').emit('click');
+  app.getElement('confirm-restart').emit('click');
+  assert.equal(app.game.score, 0);
+  assert.equal(notice.hidden, true);
+  assert.equal(notice.textContent, '');
+  assert.equal(notice.style.opacity, '0');
+  app.animations.length = 0;
+  await startClear(app, { multipleRows: true });
+  assert.equal(notice.hidden, false);
+  assert.equal(notice.textContent, '2 ROWS  +200');
+  assert.equal(notice.style.opacity, '1');
+  await app.finishAnimations();
+  assert.equal(notice.hidden, true);
+  assert.equal(notice.textContent, '');
+  assert.deepEqual(app.metrics.texts.filter(call => call.owner === 'board'), [], 'score feedback never draws over board cells');
+});
 
 test('resizing during a touch gesture rolls back the drag and ignores its later release', () => {
   for (const moveBeforeResize of [false, true]) {
@@ -544,7 +605,6 @@ test('touch and mouse use the same pointer path and a valid release inserts exac
     app.pointer('pointerup', 195, 100, pointerType);
     assert.equal(game.state, 'RESOLVING');
     assert.equal(preview.dataset.visible, 'false', 'keep the preview hidden while the outcome resolves');
-    assert.equal(app.getElement('help-button').disabled, true);
     assert.equal(app.getElement('restart-button').disabled, true);
 
     // A second input attempt during animation must be ignored.
@@ -561,7 +621,6 @@ test('touch and mouse use the same pointer path and a valid release inserts exac
     assert.equal(game.board.getSpool(spool.id).row, ROWS - 2, 'the new row supports the lifted spool');
     assert.equal(game.board.grid[ROWS - 1].filter((id) => id !== null).length, 4);
     assert.notEqual(game.nextRow, nextRow, 'the next-row preview advances once');
-    assert.equal(app.getElement('help-button').disabled, false);
     assert.equal(app.getElement('restart-button').disabled, false);
     game.board.assertValid();
   }
@@ -820,14 +879,13 @@ test('completed rows and score feedback hold for 1250 ms and fade together until
     assert.equal(app.animations[0].frame.holdDuration, 1250);
     let elapsed = 0;
     let initialPositions;
-    let popupY;
+    let noticeLayout;
     let previousFade = 1;
     let holdHighlight;
     let previousHighlight;
 
     for (const interval of [0, 625, 624, 1, 75, 74]) {
       const imageStart = app.metrics.drawImages.length;
-      const textStart = app.metrics.texts.length;
       const fillStart = app.metrics.fills.length;
       await app.advance(interval);
       elapsed += interval;
@@ -857,13 +915,15 @@ test('completed rows and score feedback hold for 1250 ms and fade together until
         previousFade = clearing[0].alpha;
       }
       assert.ok(images.filter(call => call.args[2] !== (ROWS - 2) * CELL).every(call => call.alpha === 1));
-      const popup = app.metrics.texts.slice(textStart).filter(call => call.owner === 'board').at(-1);
-      assert.ok(popup, 'clear feedback remains present during the reaction interval');
-      assert.equal(popup.alpha, clearing[0].alpha, 'popup and completed rows use the exact same hold and fade clock');
+      const notice = scoreNoticeSnapshot(app);
+      assert.equal(notice.hidden, false, 'clear feedback remains present during the reaction interval');
+      assert.equal(notice.text, 'MEOW-VELOUS!  +100');
+      assert.equal(notice.alpha, clearing[0].alpha, 'score notice and completed rows use the exact same hold and fade clock');
       const expectedAlpha = elapsed <= 1250 ? 1 : 1 - (elapsed - 1250) / 150;
-      assert.ok(Math.abs(popup.alpha - expectedAlpha) < 1e-10);
-      if (popupY === undefined) popupY = popup.args[2];
-      else assert.equal(popup.args[2], popupY, 'score feedback does not float over the resting board');
+      assert.ok(Math.abs(notice.alpha - expectedAlpha) < 1e-10);
+      if (noticeLayout === undefined) noticeLayout = notice.layout;
+      else assert.deepEqual(notice.layout, noticeLayout, 'score feedback does not move with the resting board');
+      assert.deepEqual(app.metrics.texts.filter(call => call.owner === 'board'), []);
       const rowHighlights = app.metrics.fills.slice(fillStart).filter(call =>
         call.owner === 'board' && call.args[2] === COLS * CELL && call.args[3] === CELL);
       assert.equal(rowHighlights.length, 1);
@@ -960,7 +1020,6 @@ test('a whole turn preserves its pacing when no additional drag is made during t
         assert.equal(app.game.moves, 1);
         assert.equal(app.game.state, phase.kind === 'insert' ? 'INSERTING_ROW' : phase.kind === 'clear' ? 'CLEARING' : 'RESOLVING');
         assert.equal(app.getElement('next-row').dataset.visible, String(phase.kind === 'insert'));
-        assert.equal(app.getElement('help-button').disabled, true);
         assert.equal(app.getElement('restart-button').disabled, true);
         const lockedY = phase.kind === 'clear' ? (ROWS - 1.5) * CELL : BOTTOM_CENTER_Y;
         app.pointer('pointerdown', 225, lockedY);
@@ -1026,7 +1085,6 @@ test('touch dragging a surviving row during a clear updates its live position an
 
     for (const interval of [0, 1075]) {
       const firstImage = app.metrics.drawImages.length;
-      const firstText = app.metrics.texts.length;
       await app.advance(interval);
       const images = drawnSpools(app, firstImage);
       const moving = images.find(image => image.args[2] === (ROWS - 3) * CELL);
@@ -1037,8 +1095,10 @@ test('touch dragging a surviving row during a clear updates its live position an
       const expectedAlpha = interval === 0 ? 1 : 0.5;
       assert.ok(clearing.every(image => image.alpha === expectedAlpha));
       assert.deepEqual(clearingIds.map(id => ({ ...board.getSpool(id) })), batchBefore);
-      const popup = app.metrics.texts.slice(firstText).filter(call => call.owner === 'board').at(-1);
-      assert.equal(popup.alpha, expectedAlpha, 'dragging cannot restart the clear or popup clock');
+      const notice = scoreNoticeSnapshot(app);
+      assert.equal(notice.hidden, false);
+      assert.equal(notice.text, 'MEOW-VELOUS!  +100');
+      assert.equal(notice.alpha, expectedAlpha, 'dragging cannot restart the clear or score-notice clock');
       assert.equal(board.getSpool(survivor.id).row, ROWS - 3);
       assert.equal(app.animations.length, 1, 'horizontal input must not start gravity during the clear');
       assert.equal(board.nextId, nextId);
@@ -1195,7 +1255,7 @@ test('keyboard clear-time selection skips disappearing rows, Enter commits, and 
   board.assertValid();
 });
 
-test('all clearing rows share three diminishing sweeps while survivors, background, popup, and grid stay fixed', async () => {
+test('all clearing rows share three diminishing sweeps while survivors, background, score notice, and grid stay fixed', async () => {
   for (const { unit, reducedMotion } of [
     { unit: 30, reducedMotion: false },
     { unit: 40, reducedMotion: false },
@@ -1214,7 +1274,7 @@ test('all clearing rows share three diminishing sweeps while survivors, backgrou
     const warmArtCount = app.metrics.canvasCreations;
     const warmPaintCount = app.metrics.offscreenPaints;
     let baselineBackground;
-    let baselinePopup;
+    let baselineNoticeLayout;
     let elapsed = 0;
     // The first midpoint and each extremum/return make the three leftward
     // sweeps observable, without using the production sampler as the oracle.
@@ -1244,11 +1304,12 @@ test('all clearing rows share three diminishing sweeps while survivors, backgrou
       const backgroundDestination = frame.background.args.slice(1);
       if (!baselineBackground) baselineBackground = backgroundDestination;
       else assert.deepEqual(backgroundDestination, baselineBackground, 'the board background never sways');
-      assert.ok(frame.popup);
-      const popupPosition = frame.popup.args.slice(1);
-      if (!baselinePopup) baselinePopup = popupPosition;
-      else assert.deepEqual(popupPosition, baselinePopup, 'score text does not follow the row motion');
-      assert.ok(Math.abs(frame.popup.alpha - expectedAlpha) < 1e-10);
+      assert.equal(frame.notice.hidden, false);
+      assert.equal(frame.notice.text, '2 ROWS  +200');
+      if (!baselineNoticeLayout) baselineNoticeLayout = frame.notice.layout;
+      else assert.deepEqual(frame.notice.layout, baselineNoticeLayout, 'score text does not follow the row motion');
+      assert.ok(Math.abs(frame.notice.alpha - expectedAlpha) < 1e-10);
+      assert.deepEqual(app.metrics.texts.filter(call => call.owner === 'board'), [], 'the canvas contains only the board visuals');
       assert.deepEqual(plainSnapshot(app), before, 'horizontal motion is visual only');
       assert.equal(JSON.stringify(board.grid), beforeGrid);
       assert.equal(board.nextId, nextId);
@@ -1317,12 +1378,13 @@ test('clear sway uses visible elapsed time across frame rates and pauses with th
   const resumed = await sampleBoardFrame(app, 0);
   assert.deepEqual(resumed.spools.map(image => image.args.slice(1)), beforeHide.spools.map(image => image.args.slice(1)),
     'returning from a hidden tab resumes the sway at the same position');
-  assert.equal(resumed.popup.alpha, beforeHide.popup.alpha);
-  assert.deepEqual(resumed.popup.args, beforeHide.popup.args);
+  assert.deepEqual(resumed.notice, beforeHide.notice, 'the fixed score notice also resumes at the same opacity and text');
   const rested = await sampleBoardFrame(app, 625);
   rested.spools.forEach((image, index) => assert.equal(image.args[1], frozenBoard[index].col * CELL));
   const fading = await sampleBoardFrame(app, 75);
-  assert.equal(fading.popup.alpha, 0.5);
+  assert.equal(fading.notice.hidden, false);
+  assert.equal(fading.notice.text, 'MEOW-VELOUS!  +100');
+  assert.equal(fading.notice.alpha, 0.5);
   const fadingRows = fading.spools.filter(image => image.args[2] === (ROWS - 2) * CELL);
   assert.ok(fadingRows.every(image => image.alpha === 0.5));
   assert.equal(app.game.score, 0);

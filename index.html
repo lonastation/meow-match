@@ -41,16 +41,15 @@
       <p class="intro-footnote">No timer. No rush. Just one more row.</p>
     </section>
     <section class="game-shell" aria-label="Meow Match game">
-      <div class="game-toolbar"><span class="game-label"><span class="tiny-star">✳</span> THE YARN YARD</span><div class="toolbar-actions"><button class="icon-button" id="help-button" type="button" aria-label="How to play" title="How to play">?</button><button class="icon-button" id="restart-button" type="button" aria-label="Start a new game" title="New game"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9a8 8 0 1 1-.6 6M5 4v5h5"/></svg></button></div></div>
       <div class="scoreboard"><div class="score-item current-score"><span>SCORE</span><strong id="score">0</strong></div><div class="score-item"><span>PERSONAL BEST</span><strong id="best">0</strong></div><div class="score-item"><span>MOVES</span><strong id="moves">0</strong></div></div>
+      <div class="score-notice-slot" role="status" aria-live="polite"><span class="score-notice" id="score-notice" hidden></span></div>
       <div class="board-region" id="board-region"><div class="board-wrap" id="board-wrap">
         <canvas id="board" role="img" tabindex="0" aria-label="9 by 12 spool board. Drag a spool horizontally. Keyboard: up and down select a spool, left and right slide, Enter releases, Escape cancels. Full rows clear with any colors."></canvas>
         <div class="board-overlay" id="game-over" hidden><div class="end-card"><span class="end-cat" aria-hidden="true">=^･ω･^=</span><span class="eyebrow">THE BASKET IS FULL</span><h2>Time for a<br>catnap.</h2><p>You made room for <strong id="final-score">0</strong> points.</p><button class="primary-button" id="play-again" type="button">One more purr <span aria-hidden="true">↗</span></button><span class="end-note">A fresh basket. A fresh start.</span></div></div>
-        <div class="board-overlay" id="help-overlay" hidden><div class="help-card"><span class="eyebrow">WELCOME TO THE YARN YARD</span><h2>Make room<br>for more.</h2><p>Slide any spool left or right, then let go. Yarn falls, and a completely filled row clears, in any colors.</p><p>While rows clear, you can slide the other spools. Every move brings one new row. Keep the yarn below the top!</p><div class="help-scoring"><strong>100</strong> points per row<br><strong>+50</strong> per row for each chain step</div><div class="help-items"><p><strong>Spool Cutter</strong> — one click cuts every length-3 and length-4 spool: all length 4s become two 2s each, and all length 3s become three 1s each. The whole board costs one use.</p><p><strong>Color Sweep</strong> — remove every spool of one random color on the board.</p><p><strong>Fill Five</strong> — add up to 5 single spools to empty spaces, favoring rows that can clear.</p></div><p class="help-small">Each item has 3 uses per game. Items cost no move and bring no new row. A tap or a slide back to the same spot also costs no move.</p><p class="help-small">Keyboard: ↑ / ↓ select, ← / → slide, Enter releases. Escape cancels.</p><button class="primary-button" id="close-help" type="button">Let's play <span aria-hidden="true">↗</span></button></div></div>
         <div class="board-overlay" id="restart-overlay" hidden><div class="help-card"><span class="eyebrow">A FRESH BALL OF YARN?</span><h2>Start fresh?</h2><p>Your current game will end. Your personal best stays.</p><button class="primary-button" id="confirm-restart" type="button">New game <span aria-hidden="true">↗</span></button><button class="text-button" id="cancel-restart" type="button">Keep playing</button></div></div>
       </div></div>
       <div class="game-bottom">
-        <div class="item-toolbar" role="group" aria-label="Items: 3 uses each per game">
+        <div class="item-toolbar" role="group" aria-label="Three items with 3 uses each per game, and restart">
           <button class="item-button" id="item-cutter" type="button" aria-label="Spool Cutter. 3 uses remaining. One click splits every length 4 spool into two length 2 spools and every length 3 spool into three length 1 spools, using one charge." title="Spool Cutter: one click cuts all length 4 spools into 2 + 2 and all length 3 spools into 1 + 1 + 1. One charge for the whole board; three uses per game.">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8.5 7.5 12 12m-12-3 12-12M12 12h.01"/></svg>
           </button>
@@ -59,6 +58,9 @@
           </button>
           <button class="item-button" id="item-fill" type="button" aria-label="Fill Five. 3 uses remaining. Fill up to 5 random empty spaces with single spools, prioritizing rows that can clear." title="Fill Five: add up to 5 single spools in empty spaces, prioritizing rows that can clear. Three uses per game.">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="15" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M18 2v8m-4-4h8M12 11v3m-1.5-1.5h3"/></svg>
+          </button>
+          <button class="item-button" id="restart-button" type="button" aria-label="Start a new game" title="New game">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9a8 8 0 1 1-.6 6M5 4v5h5"/></svg>
           </button>
         </div>
         <div class="next-row"><span>NEXT ROW <span aria-hidden="true">↑</span></span><canvas id="next-row" aria-label="Preview of the next bottom row"></canvas></div><div class="game-status" id="game-status" role="status" aria-live="polite"><span class="status-dot"></span><span id="status-text">Your move. Slide a spool.</span></div>

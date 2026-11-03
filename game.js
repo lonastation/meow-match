@@ -263,6 +263,7 @@ if (typeof document !== "undefined") (() => {
   const ctx = canvas.getContext("2d");
   const preview = $("next-row");
   const previewCtx = preview.getContext("2d");
+  const scoreNotice = $("score-notice");
   const background = document.createElement("canvas");
   const spoolArt = new Map();
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -283,8 +284,12 @@ if (typeof document !== "undefined") (() => {
     animate: animate,
     onChange: updateUI,
     onClear: ({ rows, chain, points }) => {
-      popup = { row: Math.min(...rows), rowCount: rows.length, chain, points, start: animationNow(),
+      popup = { start: animationNow(),
         holdDuration: TIMING.clearHold, duration: TIMING.clearHold + TIMING.clearFade };
+      const clearLabel = rows.length > 1 ? `${rows.length} ROWS` : chain > 1 ? "PURRFECT" : "MEOW-VELOUS!";
+      scoreNotice.textContent = `${clearLabel}${chain > 1 ? ` ×${chain}` : ""}  +${points}`;
+      scoreNotice.hidden = false;
+      scoreNotice.style.opacity = "1";
       // The popup carries points/chain feedback. Keep the status focused on
       // the newly available interaction throughout the clear window.
       setStatus("Rows clearing. Slide another spool.", true);
@@ -294,6 +299,12 @@ if (typeof document !== "undefined") (() => {
   function setStatus(text, busy = false) {
     $("status-text").textContent = text;
     $("game-status").classList.toggle("busy", busy);
+  }
+  function clearPopup() {
+    popup = null;
+    scoreNotice.hidden = true;
+    scoreNotice.textContent = "";
+    scoreNotice.style.opacity = "0";
   }
   function updateUI() {
     invalidate();
@@ -305,8 +316,7 @@ if (typeof document !== "undefined") (() => {
     }
     $("best").textContent = best.toLocaleString();
     const busy = game.state !== STATES.IDLE && game.state !== STATES.GAME_OVER;
-    $("help-button").disabled = busy;
-    $("restart-button").disabled = busy;
+    $("restart-button").disabled = busy || Boolean(modal);
     for (const [item, label] of [[ITEMS.CUTTER, "Spool Cutter"], [ITEMS.COLOR, "Color Sweep"], [ITEMS.FILL, "Fill Five"]]) {
       const button = $("item-" + item);
       button.disabled = Boolean(modal) || !game.canUseItem(item);
@@ -317,7 +327,7 @@ if (typeof document !== "undefined") (() => {
     canvas.dataset.state = game.state;
     if (game.state === STATES.IDLE) {
       // Finish transient score effects before returning input to the player.
-      popup = null;
+      clearPopup();
       const movable = game.board.snapshot().some((s) => { const b = game.board.dragBounds(s.id); return b.min !== b.max; });
       const hasItem = Object.values(ITEMS).some((item) => game.canUseItem(item));
       setStatus(movable ? "Your move. Slide a spool." :
@@ -327,7 +337,7 @@ if (typeof document !== "undefined") (() => {
       setStatus(game.drag ? "Find a little room, then let go." : "Rows clearing. Slide another spool.", true);
     }
     else if (game.state === STATES.INSERTING_ROW) {
-      popup = null;
+      clearPopup();
       setStatus("All settled. Here comes more yarn…", true);
     }
     else if (game.state === STATES.RESOLVING) setStatus("Let the yarn settle…", true);
@@ -497,18 +507,10 @@ if (typeof document !== "undefined") (() => {
     }
     if (popup) {
       const elapsed = now - popup.start;
-      if (elapsed >= popup.duration) popup = null;
-      else {
-        const width = Math.min(cell*7, 205), height = 32;
-        const y = Math.max(12, Math.min((popup.row-.8)*rowHeight, ROWS*rowHeight-48));
-        ctx.save(); ctx.globalAlpha = 1 - fadeProgress(elapsed, popup.holdDuration, popup.duration);
-        ctx.fillStyle = "#fcfbf3f2"; rounded(ctx,(COLS*cell-width)/2,y,width,height,16); ctx.fill();
-        ctx.strokeStyle="#80957744"; ctx.lineWidth=1; ctx.stroke();
-        drawPaw(ctx, COLS*cell/2-width/2+19,y+17,16,"#b98a59");
-        ctx.fillStyle="#5c7653"; ctx.font=`bold ${Math.min(12,cell*.44)}px 'Trebuchet MS', sans-serif`; ctx.textAlign="center"; ctx.textBaseline="middle";
-        const clearLabel = popup.rowCount > 1 ? `${popup.rowCount} ROWS` : popup.chain > 1 ? "PURRFECT" : "MEOW-VELOUS!";
-        ctx.fillText(`${clearLabel}${popup.chain > 1 ? ` ×${popup.chain}` : ""}  +${popup.points}`,COLS*cell/2+11,y+17); ctx.restore();
-      }
+      if (elapsed >= popup.duration) clearPopup();
+      // A reserved slot above the grid shares the clear's animation clock.
+      // Score feedback never covers spools or changes the board's geometry.
+      else scoreNotice.style.opacity = String(1 - fadeProgress(elapsed, popup.holdDuration, popup.duration));
     }
   }
 
@@ -712,9 +714,7 @@ if (typeof document !== "undefined") (() => {
     $(id).querySelector("button").focus({preventScroll:true});
   }
   function closeModal(focus=true) {if(modal)$(modal).hidden=true;modal=null;canvas.tabIndex=0;updateUI();if(focus)canvas.focus({preventScroll:true});}
-  function newGame(){closeModal(false);$("game-over").hidden=true;popup=null;selectedId=null;game.reset();canvas.focus({preventScroll:true});}
-  $("help-button").addEventListener("click",()=>showModal("help-overlay"));
-  $("close-help").addEventListener("click",()=>closeModal());
+  function newGame(){closeModal(false);$("game-over").hidden=true;clearPopup();selectedId=null;game.reset();canvas.focus({preventScroll:true});}
   $("restart-button").addEventListener("click",()=>showModal("restart-overlay"));
   $("confirm-restart").addEventListener("click",newGame);
   $("cancel-restart").addEventListener("click",()=>closeModal());

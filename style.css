@@ -243,57 +243,6 @@ button svg {
   box-shadow: 0 10px 30px #4c584609, 0 2px 6px #4c584603
 }
 
-.game-toolbar {
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0
-}
-
-.game-label {
-  font-size: 9px;
-  letter-spacing: 1.8px;
-  color: #7e876f;
-  font-weight: 700
-}
-
-.game-label .tiny-star {
-  font-size: 15px
-}
-
-.toolbar-actions {
-  display: flex;
-  gap: 8px
-}
-
-.icon-button {
-  display: grid;
-  place-items: center;
-  background: transparent;
-  border: 1px solid #dfdfd3;
-  border-radius: 50%;
-  width: 27px;
-  height: 27px;
-  padding: 5px;
-  color: #848d77;
-  font-size: 13px
-}
-
-.icon-button:hover {
-  background: #edf0e4
-}
-
-.icon-button svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round
-}
-
 .scoreboard {
   display: grid;
   grid-template-columns: 1fr 1.35fr .65fr;
@@ -340,6 +289,31 @@ button svg {
   color: #3d5743;
   font-weight: 700;
   font-size: 29px
+}
+
+.score-notice-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  height: 32px;
+  min-width: 0;
+  pointer-events: none
+}
+
+.score-notice {
+  max-width: 100%;
+  padding: 5px 12px;
+  border: 1px solid #d7dfc9;
+  border-radius: 20px;
+  background: #edf2e3;
+  color: #547044;
+  box-shadow: 0 2px 0 #dce4d1;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap
 }
 
 .board-region {
@@ -428,28 +402,6 @@ button svg {
   line-height: 1.7
 }
 
-.help-scoring {
-  padding: 10px;
-  border-top: 1px solid #bcc5ac;
-  border-bottom: 1px solid #bcc5ac;
-  font-size: 11px;
-  line-height: 1.8
-}
-
-.help-small {
-  font-size: 10px!important
-}
-
-.help-items {
-  text-align: left;
-  margin: 13px 0
-}
-
-.help-items p {
-  font-size: 11px;
-  margin: 8px 0
-}
-
 .primary-button {
   display: flex;
   justify-content: space-between;
@@ -498,7 +450,7 @@ button svg {
 
 .item-toolbar {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 10px
 }
@@ -716,15 +668,6 @@ button svg {
     max-height: none
   }
 
-  .game-toolbar {
-    height: 23px
-  }
-
-  .game-label {
-    font-size: 8px;
-    letter-spacing: 1.5px
-  }
-
   .scoreboard {
     padding: 13px 0
   }
@@ -830,10 +773,6 @@ button svg {
     padding: 10px
   }
 
-  .help-scoring {
-    padding: 5px
-  }
-
   .board-overlay {
     padding: 12px
   }
@@ -859,31 +798,19 @@ button svg {
   .game-shell {
     max-width: 630px;
     display: grid;
-    grid-template-columns: 150px 1fr 150px;
-    grid-template-rows: 40px 1fr;
+    grid-template-columns: minmax(80px, 1fr) minmax(0, 2fr) minmax(100px, 1fr);
+    grid-template-rows: 32px minmax(0, 1fr);
     gap: 8px;
     width: 100%;
     padding: 10px
   }
 
-  .game-toolbar {
-    grid-column: 1;
-    grid-row: 1
-  }
-
-  .game-label {
-    font-size: 7px
-  }
-
-  .toolbar-actions {
-    gap: 3px
-  }
-
   .scoreboard {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 1/3;
     display: flex;
     flex-direction: column;
+    align-self: center;
     gap: 12px;
     padding: 0
   }
@@ -894,9 +821,19 @@ button svg {
     padding: 0
   }
 
+  .score-notice-slot {
+    grid-column: 2;
+    grid-row: 1
+  }
+
+  .score-notice {
+    padding: 5px 9px;
+    font-size: 10px
+  }
+
   .board-region {
     grid-column: 2;
-    grid-row: 1/3;
+    grid-row: 2;
     height: 100%
   }
 
@@ -907,7 +844,7 @@ button svg {
   }
 
   .item-toolbar {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 5px;
     margin-bottom: 8px
   }
@@ -920,6 +857,10 @@ button svg {
   .next-row {
     flex-direction: column;
     gap: 9px
+  }
+
+  #next-row {
+    width: 100%
   }
 
   .game-status {
@@ -936,10 +877,6 @@ button svg {
   }
 
   .help-card p {
-    font-size: 9px
-  }
-
-  .help-scoring {
     font-size: 9px
   }
 
