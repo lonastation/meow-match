@@ -4,8 +4,6 @@ A touch-first puzzle game about making room for yarn. Slide horizontal spools le
 
 **Play:** https://lonastation.github.io/meow-match/
 
----
-
 ## How to Play
 
 The board is **9 columns × 12 rows**. Every spool lies flat in a single row and is 1–5 cells long.
